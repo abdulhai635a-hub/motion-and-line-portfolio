@@ -112,14 +112,6 @@ export const projects: Project[] = [
     summary: "Another WW2-set stickman sequence.",
   },
   {
-    slug: "crazy-drug",
-    title: "Crazy Drug",
-    category: "personal",
-    accent: "coral",
-    driveId: "1n60FLIeBDcjoZnu__dqwckeiIPGiRore",
-    summary: "A PSA-style stickman short featuring the Ferry character.",
-  },
-  {
     slug: "date-or-detonate",
     title: "Date or Detonate",
     category: "personal",
