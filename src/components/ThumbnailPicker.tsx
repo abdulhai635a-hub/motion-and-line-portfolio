@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ProjectFrames = {
   slug: string;
@@ -12,16 +12,22 @@ type ProjectFrames = {
 const STORAGE_KEY = "thumbnail-picks";
 
 export default function ThumbnailPicker({ projects }: { projects: ProjectFrames[] }) {
-  const [picks, setPicks] = useState<Record<string, string>>(() => {
-    if (typeof window === "undefined") return {};
+  // Starts empty to match the server-rendered HTML exactly, then loads the
+  // real picks from localStorage after mount — reading localStorage during
+  // the initial render would mismatch SSR output and break hydration.
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : {};
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing with localStorage, a client-only external store, is only possible after mount
+      if (saved) setPicks(JSON.parse(saved));
     } catch {
-      return {};
+      // ignore
     }
-  });
-  const [copied, setCopied] = useState(false);
+  }, []);
 
   const choose = (slug: string, frame: string) => {
     const next = { ...picks, [slug]: frame };
@@ -34,32 +40,64 @@ export default function ThumbnailPicker({ projects }: { projects: ProjectFrames[
   };
 
   const pickedCount = Object.keys(picks).length;
+  const summaryText = Object.entries(picks)
+    .map(([slug, frame]) => `${slug}: ${frame}`)
+    .join("\n");
 
   const copySummary = async () => {
-    const lines = Object.entries(picks).map(([slug, frame]) => `${slug}: ${frame}`);
-    const text = lines.length > 0 ? lines.join("\n") : "No selections yet.";
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(summaryText);
+        setCopyStatus("copied");
+        setTimeout(() => setCopyStatus("idle"), 2500);
+        return;
+      }
+      throw new Error("Clipboard API unavailable");
     } catch {
-      // ignore
+      // Fallback: select the visible textarea text so the user can copy manually (Ctrl/Cmd+C).
+      textareaRef.current?.focus();
+      textareaRef.current?.select();
+      setCopyStatus("failed");
+      setTimeout(() => setCopyStatus("idle"), 4000);
     }
   };
 
   return (
     <div>
-      <div className="sticky top-16 z-10 -mx-6 mb-8 flex items-center justify-between gap-4 border-b border-border bg-background/95 px-6 py-4 backdrop-blur">
-        <p className="text-sm text-muted">
-          {pickedCount} of {projects.length} selected
-        </p>
-        <button
-          onClick={copySummary}
-          disabled={pickedCount === 0}
-          className="rounded-full bg-coral px-5 py-2 text-sm font-medium text-white transition-transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100"
-        >
-          {copied ? "Copied!" : "Copy my selections"}
-        </button>
+      <div className="sticky top-16 z-10 -mx-6 mb-8 flex flex-col gap-3 border-b border-border bg-background/95 px-6 py-4 backdrop-blur">
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm text-muted">
+            {pickedCount} of {projects.length} selected
+          </p>
+          <button
+            onClick={copySummary}
+            disabled={pickedCount === 0}
+            className="rounded-full bg-coral px-5 py-2 text-sm font-medium text-white transition-transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100"
+          >
+            {copyStatus === "copied"
+              ? "Copied!"
+              : copyStatus === "failed"
+                ? "Couldn't auto-copy — text selected below"
+                : "Copy my selections"}
+          </button>
+        </div>
+
+        {pickedCount > 0 && (
+          <div>
+            <p className="text-xs text-muted">
+              If the button doesn&apos;t copy for you, click inside this box, select all
+              (Ctrl/Cmd+A), and copy (Ctrl/Cmd+C) manually:
+            </p>
+            <textarea
+              ref={textareaRef}
+              readOnly
+              value={summaryText}
+              rows={3}
+              onFocus={(e) => e.currentTarget.select()}
+              className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs"
+            />
+          </div>
+        )}
       </div>
 
       <div className="space-y-10">
