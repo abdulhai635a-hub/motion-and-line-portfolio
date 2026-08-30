@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import RevealOnScroll from "@/components/RevealOnScroll";
 import { skillGroups, timeline } from "@/lib/data";
 
@@ -13,7 +14,17 @@ export default function AboutPage() {
       <h1 className="font-display text-3xl font-semibold sm:text-4xl">About</h1>
 
       <RevealOnScroll className="mt-6">
-        <div className="h-40 w-40 rounded-full border border-border bg-gradient-to-br from-coral/60 to-yellow/50" />
+        <div className="relative h-40 w-40 overflow-hidden rounded-full border border-border">
+          <Image
+            src="/images/profile.jpg"
+            alt="Shohan Hossain"
+            fill
+            sizes="160px"
+            className="object-cover"
+            style={{ objectPosition: "50% 25%" }}
+            priority
+          />
+        </div>
         <p className="mt-6 max-w-xl leading-relaxed text-foreground/90">
           Welcome to my profile. I&apos;m a character designer, 2D animator, 2D character designer,
           drawing artist, Adobe Illustrator expert, cartoon illustrator, and graphic designer. I
