@@ -44,7 +44,7 @@ export default async function ProjectPage({
       {project.client && <p className="mt-3 text-lg text-muted">{project.client}</p>}
 
       <div className="mt-8">
-        <DriveVideo driveId={project.driveId} title={project.title} />
+        <DriveVideo driveId={project.driveId} title={project.title} slug={project.slug} />
       </div>
 
       {hasDetails && (

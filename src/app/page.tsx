@@ -51,7 +51,7 @@ export default function Home() {
             </div>
           </div>
 
-          <DriveVideo driveId={heroProject.driveId} title={heroProject.title} />
+          <DriveVideo driveId={heroProject.driveId} title={heroProject.title} slug={heroProject.slug} />
         </div>
       </section>
 
