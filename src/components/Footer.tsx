@@ -12,7 +12,7 @@ export default function Footer() {
     <footer className="border-t border-border">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-10 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="font-display text-lg font-semibold">Motion &amp; Line</p>
+          <p className="font-display text-lg font-semibold">Shohan Hossain</p>
           <p className="mt-1 text-sm text-muted">
             2D animation &amp; motion design. Based anywhere, working everywhere.
           </p>
@@ -37,7 +37,7 @@ export default function Footer() {
           hello@motionandline.com
         </Link>
         <span className="mx-2">·</span>
-        &copy; {new Date().getFullYear()} Motion &amp; Line. All rights reserved.
+        &copy; {new Date().getFullYear()} Shohan Hossain. All rights reserved.
       </div>
     </footer>
   );

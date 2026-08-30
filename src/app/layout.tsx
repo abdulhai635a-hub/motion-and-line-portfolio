@@ -18,8 +18,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Motion & Line — 2D Animator Portfolio",
-    template: "%s — Motion & Line",
+    default: "Shohan Hossain — 2D Animator Portfolio",
+    template: "%s — Shohan Hossain",
   },
   description:
     "2D animator & motion designer specializing in character animation, explainers, and motion graphics. A portfolio that performs, not just displays.",
