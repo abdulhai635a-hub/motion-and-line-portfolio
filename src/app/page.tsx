@@ -20,7 +20,7 @@ export default function Home() {
   const featured = featuredSlugs
     .map((slug) => projects.find((p) => p.slug === slug))
     .filter((p): p is (typeof projects)[number] => Boolean(p));
-  const heroProject = projects.find((p) => p.slug === "ferry-intro")!;
+  const heroProject = projects.find((p) => p.slug === "serious-history-scene-1")!;
 
   return (
     <div>

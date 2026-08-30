@@ -32,6 +32,14 @@ export type Project = {
 export const projects: Project[] = [
   // Signature stickman pieces
   {
+    slug: "serious-history-scene-1",
+    title: "Serious History — Scene 1",
+    category: "personal",
+    accent: "coral",
+    driveId: "1G6UEwH2WazlSFgCHkij5IbCI30e0oSST",
+    summary: "A stickman take on a serious historical moment.",
+  },
+  {
     slug: "ferry-intro",
     title: "Ferry — Intro",
     category: "personal",
@@ -62,14 +70,6 @@ export const projects: Project[] = [
     accent: "coral",
     driveId: "1FPJv6wuMzyq_O37bWyKR7G5tiMRZtbea",
     summary: "A full stickman fight short — the closest thing to the signature centerpiece.",
-  },
-  {
-    slug: "serious-history-scene-1",
-    title: "Serious History — Scene 1",
-    category: "personal",
-    accent: "coral",
-    driveId: "1G6UEwH2WazlSFgCHkij5IbCI30e0oSST",
-    summary: "A stickman take on a serious historical moment.",
   },
   {
     slug: "roman-empire",
