@@ -383,10 +383,18 @@ export type SkillGroup = {
 };
 
 export const skillGroups: SkillGroup[] = [
-  { label: "Animation", skills: ["After Effects", "Character Animation", "Frame-by-Frame", "Motion Graphics"] },
-  { label: "Rigging", skills: ["Spine 2D", "Rive", "Puppet Pin / Mesh Rigs"] },
-  { label: "Design", skills: ["Illustrator", "Photoshop", "Procreate", "Figma"] },
-  { label: "Web", skills: ["Lottie / Bodymovin", "Basic React", "GSAP"] },
+  {
+    label: "Specialties",
+    skills: [
+      "Character Design",
+      "2D Animation",
+      "2D Character Design",
+      "Drawing / Illustration",
+      "Cartoon Illustration",
+      "Graphic Design",
+    ],
+  },
+  { label: "Tools", skills: ["Adobe Illustrator"] },
 ];
 
 export type TimelineEntry = {

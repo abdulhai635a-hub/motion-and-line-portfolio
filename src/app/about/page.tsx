@@ -14,19 +14,16 @@ export default function AboutPage() {
 
       <RevealOnScroll className="mt-6">
         <div className="h-40 w-40 rounded-full border border-border bg-gradient-to-br from-coral/60 to-yellow/50" />
-        <p className="mt-6 max-w-xl leading-relaxed text-muted">
-          [Add your bio here — how you got into animation, what you work on now, what makes your stickman
-          style yours. Edit this paragraph directly in{" "}
-          <code className="rounded bg-surface px-1.5 py-0.5 text-sm">src/app/about/page.tsx</code>.]
+        <p className="mt-6 max-w-xl leading-relaxed text-foreground/90">
+          Welcome to my profile. I&apos;m a character designer, 2D animator, 2D character designer,
+          drawing artist, Adobe Illustrator expert, cartoon illustrator, and graphic designer. I
+          believe in quality work, and I always deliver quality work. I like challenging, new
+          projects, and I&apos;m always looking for something fresh and creative. Have a good day!
         </p>
       </RevealOnScroll>
 
       <RevealOnScroll className="mt-14">
         <h2 className="font-display text-xl font-semibold">Skills &amp; tools</h2>
-        <p className="mt-1 text-sm text-muted">
-          Starter list — edit <code className="rounded bg-surface px-1.5 py-0.5">skillGroups</code> in{" "}
-          <code className="rounded bg-surface px-1.5 py-0.5">src/lib/data.ts</code> to match what you actually use.
-        </p>
         <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
           {skillGroups.map((group) => (
             <div key={group.label}>

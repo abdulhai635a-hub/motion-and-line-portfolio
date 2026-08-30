@@ -26,7 +26,7 @@ export default function Nav() {
           Shohan&nbsp;<span className="text-coral">Hossain</span>
         </Link>
 
-        <nav className="hidden items-center gap-6 md:flex">
+        <nav className="hidden items-center gap-6 lg:flex">
           {links.map((link) => (
             <Link
               key={link.href}
@@ -43,7 +43,7 @@ export default function Nav() {
 
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-border md:hidden"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border lg:hidden"
           aria-label="Toggle menu"
           aria-expanded={open}
         >
@@ -56,7 +56,7 @@ export default function Nav() {
       </div>
 
       {open && (
-        <nav className="flex flex-col gap-1 border-t border-border px-6 pb-4 md:hidden">
+        <nav className="flex flex-col gap-1 border-t border-border px-6 pb-4 lg:hidden">
           {links.map((link) => (
             <Link
               key={link.href}
