@@ -27,8 +27,10 @@ import { mergeSelectors } from './driver/selectors.ts';
 import { inspectPage, renderInspection } from './driver/inspect.ts';
 import {
   probeAttribute,
+  probeKeyframeButtons,
   probePlayhead,
   probeSelector,
+  renderButtons,
   renderInteraction,
   renderPlayhead,
   renderSurvey,
@@ -104,6 +106,8 @@ Browser (drive / verify-layout)
                            that are not attribute rows (the playhead, say)
   --playhead               probe only: work out how the playhead is moved and
                            how its frame number is read back
+  --buttons                probe only: report why a keyframe button cannot be
+                           clicked, and what other keyframe controls exist
   --type-value <text>      probe only: also type this, then press Escape to
                            cancel, so the editing gesture can be seen end to end
 
@@ -200,6 +204,7 @@ function readArgs(argv: string[]): Cli {
       attribute: { type: 'string' },
       click: { type: 'string' },
       playhead: { type: 'boolean' },
+      buttons: { type: 'boolean' },
       'type-value': { type: 'string' },
     },
   });
@@ -568,6 +573,9 @@ async function runProbe(cli: Cli): Promise<number> {
     const attribute = typeof cli.values.attribute === 'string' ? cli.values.attribute : undefined;
     if (attribute !== undefined) {
       parts.push('', renderInteraction(await probeAttribute(session.page, attribute, typeValue)));
+    }
+    if (cli.values.buttons === true) {
+      parts.push('', renderButtons(await probeKeyframeButtons(session.page)));
     }
     if (cli.values.playhead === true) {
       parts.push('', renderPlayhead(await probePlayhead(session.page)));

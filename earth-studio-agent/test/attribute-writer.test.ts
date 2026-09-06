@@ -164,6 +164,50 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('keyframes even when the button has no box at all', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // What the live editor did in a narrow window: the button is in the DOM but
+    // renders to nothing, so even a forced click fails with "not visible".
+    await page.addStyleTag({ content: '.add-keyframe { display: none !important; }' });
+    assert.equal(await page.locator('[data-attribute-type="latitude"] .add-keyframe').isVisible(), false);
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 12.25);
+    assert.equal(result.keyframed, true);
+
+    const added = await page.evaluate(
+      () => (window as unknown as { __keyframesAdded: Array<{ type: string }> }).__keyframesAdded,
+    );
+    assert.deepEqual(added.map((entry) => entry.type), ['latitude']);
+    await page.close();
+  });
+
+  test('reports every way it tried when none of them keyframes', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // The button is there but inert: no click of any kind will keyframe.
+    await page.evaluate(() => {
+      const button = document.querySelector('[data-attribute-type="latitude"] .add-keyframe');
+      if (button !== null) button.replaceWith(button.cloneNode(true));
+    });
+    await page.addStyleTag({ content: '.add-keyframe { display: none !important; }' });
+
+    await assert.rejects(
+      () => writeAttribute(page as unknown as PageLike, LATITUDE, 12.25),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.match(error.message, /Could not add a keyframe/);
+        assert.match(error.detail ?? '', /hover and click/);
+        assert.match(error.detail ?? '', /click from inside the page/);
+        assert.match(error.hint ?? '', /probe --buttons/);
+        return true;
+      },
+    );
+    await page.close();
+  });
+
   test('can set a value without keyframing it', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

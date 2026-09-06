@@ -223,33 +223,65 @@ async function ensureKeyframe(
   }
 
   const button = `${row} [data-action="click:addKeyframe"]`;
-  try {
-    // The button is revealed on hover in the live editor, so hover first and
-    // fall back to a forced click if something is sitting over it.
-    if (typeof page.hover === 'function') await page.hover(row, { timeout: timeoutMs });
-    await page.click!(button, { timeout: timeoutMs });
-  } catch (firstAttempt) {
+  const attempts: string[] = [];
+
+  // Three ways in, weakest assumptions last. A real mouse click is the most
+  // faithful; a forced one ignores anything sitting over the button; and
+  // dispatching the click from inside the page works even when the button has
+  // no box at all, which is what a narrow Earth Studio window produces - the
+  // live run failed with "Element is not visible" even under force.
+  const ways: Array<[string, () => Promise<unknown>]> = [
+    ['hover and click', async () => {
+      if (typeof page.hover === 'function') await page.hover(row, { timeout: timeoutMs });
+      await page.click!(button, { timeout: timeoutMs });
+    }],
+    ['forced click', async () => page.click!(button, { timeout: timeoutMs, force: true })],
+    ['click from inside the page', async () => {
+      if (typeof page.evaluate !== 'function') throw new Error('the page cannot run script');
+      const clicked = await page.evaluate<boolean>(
+        new Function(`
+          const node = document.querySelector(${quote(button)});
+          if (node === null) return false;
+          node.click();
+          return true;
+        `) as () => boolean,
+      );
+      if (!clicked) throw new Error('the button is not in the page');
+    }],
+  ];
+
+  let landed = false;
+  for (const [name, attempt] of ways) {
     try {
-      await page.click!(button, { timeout: timeoutMs, force: true });
+      await attempt();
     } catch (cause) {
-      throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `Could not click the keyframe button for ${target.label}.`, {
-        detail: `${describe(firstAttempt)} (a forced click also failed: ${describe(cause)})`,
-        hint: 'The value was set, but it is not a keyframe without this button.',
-        cause,
-      });
+      attempts.push(`${name}: ${describe(cause)}`);
+      continue;
     }
+    if (await keyframeAppeared(page, target)) {
+      landed = true;
+      break;
+    }
+    attempts.push(`${name}: no keyframe appeared`);
   }
 
-  // Confirm with the app's own marker rather than assuming the click landed.
+  if (!landed) {
+    throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `Could not add a keyframe for ${target.label}.`, {
+      detail: attempts.join('; '),
+      hint: 'The value was set, but it is not a keyframe. Run "earth-studio-agent probe --buttons" to see the control.',
+    });
+  }
+  return true;
+}
+
+/** Waits briefly for the app to mark the row as keyframed at this frame. */
+async function keyframeAppeared(page: PageLike, target: AttributeTarget): Promise<boolean> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     if ((await readRow(page, target)).hasKeyframe) return true;
     await new Promise((done) => setTimeout(done, 100));
   }
-  throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `No keyframe appeared for ${target.label}.`, {
-    detail: 'The keyframe button was clicked but the row never gained a keyframe at this frame.',
-    hint: 'The value was set. Check the timeline in Earth Studio.',
-  });
+  return false;
 }
 
 function describe(error: unknown): string {

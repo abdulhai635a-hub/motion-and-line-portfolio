@@ -342,3 +342,107 @@ export function renderPlayhead(report: PlayheadReport): string {
   }
   return lines.join('\n');
 }
+
+
+/**
+ * Reports why a keyframe button cannot be clicked.
+ *
+ * A live run failed with "Element is not visible" even under a forced click, so
+ * something is hiding the button rather than merely styling it. This reports
+ * each button's box and computed style, whether the app marks it as already
+ * keyframed, and the panel header - which carries its own keyframe control that
+ * may be the one meant to be used.
+ */
+export interface ButtonReport {
+  rows: Array<{
+    type: string;
+    classes: string;
+    hasKeyframe: boolean;
+    rect: { x: number; y: number; width: number; height: number };
+    display: string;
+    visibility: string;
+    opacity: string;
+    /** What is actually on top at the button's centre. */
+    topmost: string;
+  }>;
+  /** Any keyframe-ish control outside the rows, e.g. in the panel header. */
+  otherControls: Array<{ selector: string; title: string; html: string }>;
+  panelHeaderHtml: string;
+}
+
+export async function probeKeyframeButtons(page: PageLike): Promise<ButtonReport> {
+  if (typeof page.evaluate !== 'function') {
+    throw new AgentError('DRIVER_NOT_READY', 'This page cannot be probed.');
+  }
+  return page.evaluate<ButtonReport>(() => {
+    const describe = (element: Element | null): string => {
+      if (element === null) return '(none)';
+      const classes = element.className ? String(element.className).trim().split(/\s+/).join('.') : '';
+      return element.tagName.toLowerCase() + (classes === '' ? '' : '.' + classes);
+    };
+
+    const rows = Array.from(document.querySelectorAll('[data-attribute-type]')).flatMap((row) => {
+      const button = row.querySelector('[data-action="click:addKeyframe"]');
+      if (button === null) return [];
+      const rect = button.getBoundingClientRect();
+      const style = window.getComputedStyle(button);
+      const topmost =
+        rect.width > 0 && rect.height > 0
+          ? describe(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+          : '(no box)';
+      return [{
+        type: row.getAttribute('data-attribute-type') ?? '',
+        classes: button.className.toString(),
+        hasKeyframe: button.classList.contains('has-keyframe'),
+        rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+        display: style.display,
+        visibility: style.visibility,
+        opacity: style.opacity,
+        topmost,
+      }];
+    });
+
+    // Keyframe controls that are not inside an attribute row - the panel header
+    // has one, and it may be the control that keyframes the whole camera.
+    const otherControls = Array.from(document.querySelectorAll('[data-action*="eyframe"], [title-tooltip*="eyframe"]'))
+      .filter((element) => element.closest('[data-attribute-type]') === null)
+      .slice(0, 8)
+      .map((element) => ({
+        selector: describe(element),
+        title: element.getAttribute('title-tooltip') ?? element.getAttribute('title') ?? '',
+        html: element.outerHTML.slice(0, 400),
+      }));
+
+    const header =
+      document.querySelector('.attribute-list-container') ??
+      document.querySelector('.timeline-attributes') ??
+      document.querySelector('.attributes');
+    return {
+      rows,
+      otherControls,
+      panelHeaderHtml: header === null ? '(no attribute panel found)' : header.outerHTML.slice(0, 2500),
+    };
+  });
+}
+
+export function renderButtons(report: ButtonReport): string {
+  const lines = ['Keyframe buttons', ''];
+  lines.push(`  ${'attribute'.padEnd(20)} ${'box'.padEnd(22)} ${'display'.padEnd(14)} ${'vis'.padEnd(9)} ${'opacity'.padEnd(8)} keyed  topmost`);
+  for (const row of report.rows) {
+    const box = `${row.rect.width}x${row.rect.height} @${row.rect.x},${row.rect.y}`;
+    lines.push(
+      `  ${row.type.padEnd(20)} ${box.padEnd(22)} ${row.display.padEnd(14)} ${row.visibility.padEnd(9)} ` +
+        `${row.opacity.padEnd(8)} ${String(row.hasKeyframe).padEnd(6)} ${row.topmost}`,
+    );
+  }
+  lines.push('');
+  lines.push(`Keyframe controls outside the rows (${report.otherControls.length})`);
+  for (const control of report.otherControls) {
+    lines.push(`  ${control.selector}  ${control.title === '' ? '' : `"${control.title}"`}`);
+    lines.push(`    ${control.html}`);
+  }
+  lines.push('');
+  lines.push('Attribute panel');
+  lines.push(report.panelHeaderHtml);
+  return lines.join('\n');
+}
