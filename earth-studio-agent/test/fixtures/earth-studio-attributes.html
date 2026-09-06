@@ -20,6 +20,15 @@
   gesture; the probe's job is to report whatever actually happens, so the real
   behaviour can be read off a real session rather than assumed.
 -->
+<style>
+  /* The live editor reveals the keyframe button on hover, which is why the
+     driver hovers the row before clicking it. */
+  /* display:none rather than opacity, so a click really does need the hover -
+     an invisible-but-present button would be clickable without it and the
+     hover step would go untested. */
+  .add-keyframe { display: none; }
+  li.attribute:hover .add-keyframe, .add-keyframe.has-keyframe { display: inline-block; }
+</style>
 <div data-earth-studio-app>
 <div class="playback-controls"><ul>
   <li class="control" data-action="click:jumpWorkspaceStart" tabindex="0"><span class="icon-start" title-tooltip="Jump to Workspace Start"></span></li>
@@ -172,7 +181,10 @@
       return hh + ':' + mm + ':' + ss;
     }
   ];
-  var draw = function () { readout.textContent = FORMATS[format](); };
+  var draw = function () {
+    readout.textContent = FORMATS[format]();
+    if (window.__refreshKeyframeMarkers) window.__refreshKeyframeMarkers();
+  };
   readout.addEventListener('click', function () { format = (format + 1) % FORMATS.length; draw(); });
   window.__frame = function () { return frame; };
   // The transport buttons the live editor shows beside the readout.
@@ -209,18 +221,34 @@
   });
 
   // Every attribute row carries an "add keyframe" button.
+  // Keyframes are per attribute per frame, and the button carries the
+  // has-keyframe class the live editor binds to hasKeyframeAtCurrentFrame.
   window.__keyframesAdded = [];
+  var keyed = {};
+  var keyOf = function (type, at) { return type + '@' + at; };
+
+  var refreshMarkers = function () {
+    document.querySelectorAll('[data-action="click:addKeyframe"]').forEach(function (button) {
+      var row = button.closest('[data-attribute-type]');
+      var type = row ? row.getAttribute('data-attribute-type') : '';
+      button.classList.toggle('has-keyframe', keyed[keyOf(type, frame)] === true);
+    });
+  };
+  window.__refreshKeyframeMarkers = refreshMarkers;
+
   document.querySelectorAll('[data-action="click:addKeyframe"]').forEach(function (button) {
     button.addEventListener('click', function () {
       var row = button.closest('[data-attribute-type]');
+      var type = row ? row.getAttribute('data-attribute-type') : '';
+      keyed[keyOf(type, frame)] = true;
       window.__keyframesAdded.push({
-        type: row ? row.getAttribute('data-attribute-type') : '',
+        type: type,
         frame: frame,
         // The degrees widget, not the whole-rotations one beside it in
         // longitude and the rotation rows.
         value: row ? row.querySelector('.scrub-input.valueInput .presentedValue').textContent : ''
       });
-      button.classList.add('has-keyframe');
+      refreshMarkers();
     });
   });
 })();

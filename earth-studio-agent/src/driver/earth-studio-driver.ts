@@ -180,7 +180,9 @@ export class EarthStudioDriver {
           skipped: [],
           details: [],
           ok: false,
-          error: cause instanceof Error ? cause.message : String(cause),
+          // format() keeps the inner detail and hint; message alone would throw
+          // away the actual reason and leave only the outer summary.
+          error: cause instanceof AgentError ? cause.format() : cause instanceof Error ? cause.message : String(cause),
         };
         results.push(result);
         if (options.continueOnError !== true) {

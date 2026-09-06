@@ -131,6 +131,39 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('hovers to reveal a keyframe button that is hidden until then', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // The live editor only shows the button on hover.
+    assert.equal(await page.locator('[data-attribute-type="latitude"] .add-keyframe').isVisible(), false);
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 12.25);
+    assert.equal(result.keyframed, true);
+    await page.close();
+  });
+
+  test('does not click a keyframe button that already reports a keyframe', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await writeAttribute(page as unknown as PageLike, LATITUDE, 12.25);
+
+    // Earth Studio keyframes an animated attribute by itself, so clicking the
+    // button again would remove the keyframe rather than add one.
+    const before = (await page.evaluate(
+      () => (window as unknown as { __keyframesAdded: unknown[] }).__keyframesAdded.length,
+    )) as number;
+    const second = await writeAttribute(page as unknown as PageLike, LATITUDE, 13.5);
+    const afterCount = (await page.evaluate(
+      () => (window as unknown as { __keyframesAdded: unknown[] }).__keyframesAdded.length,
+    )) as number;
+
+    assert.equal(second.keyframed, true);
+    assert.equal(afterCount, before, 'the button should not be clicked a second time');
+    await page.close();
+  });
+
   test('can set a value without keyframing it', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

@@ -47,6 +47,14 @@ interface RowState {
   displayed: string;
   unitTitle: string;
   editBox: string | null;
+  /**
+   * Whether the row already has a keyframe at the current frame. Earth Studio
+   * binds this itself: the keyframe button carries
+   * data-bind-attr="class=hasKeyframeAtCurrentFrame:has-keyframe".
+   */
+  hasKeyframe: boolean;
+  /** Whether the keyframe button is in the DOM at all. */
+  hasKeyframeButton: boolean;
 }
 
 const rowSelector = (type: string): string => `[data-attribute-type="${type}"]`;
@@ -60,11 +68,16 @@ async function readRow(page: PageLike, target: AttributeTarget): Promise<RowStat
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be read.');
   }
-  const widget = `${rowSelector(target.attributeType)} ${target.widget}`;
+  const row = rowSelector(target.attributeType);
+  const widget = `${row} ${target.widget}`;
   return page.evaluate<RowState>(
     new Function(`
       const widget = document.querySelector(${quote(widget)});
-      if (widget === null) return { found: false, displayed: '', unitTitle: '', editBox: null };
+      const row = document.querySelector(${quote(row)});
+      const button = row === null ? null : row.querySelector('[data-action="click:addKeyframe"]');
+      if (widget === null) {
+        return { found: false, displayed: '', unitTitle: '', editBox: null, hasKeyframe: false, hasKeyframeButton: button !== null };
+      }
       const box = widget.querySelector('[contenteditable="true"], [contenteditable=""]');
       return {
         found: true,
@@ -73,6 +86,8 @@ async function readRow(page: PageLike, target: AttributeTarget): Promise<RowStat
           ? widget.querySelector('.unit').getAttribute('title') || ''
           : '',
         editBox: box === null ? null : (box.textContent || ''),
+        hasKeyframe: button !== null && button.classList.contains('has-keyframe'),
+        hasKeyframeButton: button !== null,
       };
     `) as () => RowState,
   );
@@ -170,16 +185,7 @@ export async function writeAttribute(
 
   let keyframed = false;
   if (addKeyframe) {
-    try {
-      await page.click(`${row} [data-action="click:addKeyframe"]`, { timeout: timeoutMs });
-      keyframed = true;
-    } catch (cause) {
-      throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `Could not add a keyframe for ${target.label}.`, {
-        detail: cause instanceof Error ? cause.message : String(cause),
-        hint: 'The value was set, but it is not a keyframe without this button.',
-        cause,
-      });
-    }
+    keyframed = await ensureKeyframe(page, target, row, after, timeoutMs);
   }
 
   return {
@@ -191,6 +197,64 @@ export async function writeAttribute(
     readback,
     keyframed,
   };
+}
+
+/**
+ * Makes sure the value is a keyframe, not a static change.
+ *
+ * Earth Studio keyframes an animated attribute by itself when its value
+ * changes, and marks that on the row's button with a `has-keyframe` class. So
+ * the button is only clicked when the app says there is no keyframe yet -
+ * clicking one that already exists would remove it.
+ */
+async function ensureKeyframe(
+  page: PageLike,
+  target: AttributeTarget,
+  row: string,
+  after: RowState,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (after.hasKeyframe) return true;
+  if (!after.hasKeyframeButton) {
+    throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} row has no keyframe button.`, {
+      detail: `Looked for ${row} [data-action="click:addKeyframe"]`,
+      hint: 'The value was set, but it is not a keyframe. Run "earth-studio-agent probe" to see the row.',
+    });
+  }
+
+  const button = `${row} [data-action="click:addKeyframe"]`;
+  try {
+    // The button is revealed on hover in the live editor, so hover first and
+    // fall back to a forced click if something is sitting over it.
+    if (typeof page.hover === 'function') await page.hover(row, { timeout: timeoutMs });
+    await page.click!(button, { timeout: timeoutMs });
+  } catch (firstAttempt) {
+    try {
+      await page.click!(button, { timeout: timeoutMs, force: true });
+    } catch (cause) {
+      throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `Could not click the keyframe button for ${target.label}.`, {
+        detail: `${describe(firstAttempt)} (a forced click also failed: ${describe(cause)})`,
+        hint: 'The value was set, but it is not a keyframe without this button.',
+        cause,
+      });
+    }
+  }
+
+  // Confirm with the app's own marker rather than assuming the click landed.
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if ((await readRow(page, target)).hasKeyframe) return true;
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `No keyframe appeared for ${target.label}.`, {
+    detail: 'The keyframe button was clicked but the row never gained a keyframe at this frame.',
+    hint: 'The value was set. Check the timeline in Earth Studio.',
+  });
+}
+
+function describe(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split('\n')[0] ?? message;
 }
 
 /** Plain decimal text; the field is a contenteditable, not a number input. */
