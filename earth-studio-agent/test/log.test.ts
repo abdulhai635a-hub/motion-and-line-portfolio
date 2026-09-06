@@ -74,11 +74,11 @@ describe('driver reports', () => {
       total: 2,
       applied: 1,
       results: [
-        { frame: 0, stepIndex: 1, label: 'start', written: { latitude: 1, altitude: 100 }, skipped: ['roll'], ok: true },
-        { frame: 30, stepIndex: 2, label: 'fly_to Rome (end)', written: {}, skipped: [], ok: false, error: 'altitude rejected' },
+        { frame: 0, stepIndex: 1, label: 'start', written: { latitude: 1, altitude: 100 }, skipped: ['roll'], ok: true, details: [] },
+        { frame: 30, stepIndex: 2, label: 'fly_to Rome (end)', written: {}, skipped: [], ok: false, error: 'altitude rejected', details: [] },
       ],
       failures: [
-        { frame: 30, stepIndex: 2, label: 'fly_to Rome (end)', written: {}, skipped: [], ok: false, error: 'altitude rejected' },
+        { frame: 30, stepIndex: 2, label: 'fly_to Rome (end)', written: {}, skipped: [], ok: false, error: 'altitude rejected', details: [] },
       ],
     });
     assert.match(text, /Wrote 1 of 2 keyframes/);

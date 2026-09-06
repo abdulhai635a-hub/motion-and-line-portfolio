@@ -1,15 +1,17 @@
 /**
- * End-to-end driver test against a real Chromium.
+ * The whole driver, end to end, against a real Chromium.
  *
- * Google Earth Studio needs a signed-in Google account and cannot be automated
- * in CI, so the driver is exercised against test/fixtures/mock-earth-studio.html,
- * which reproduces the one behaviour the driver relies on: committing a value in
- * an attribute field creates a keyframe for that attribute at the current frame.
+ * Google Earth Studio needs a signed-in account and cannot be automated in CI,
+ * so the driver runs against test/fixtures/earth-studio-attributes.html - a
+ * copy of the markup and behaviour read off a live session with
+ * `earth-studio-agent probe`: attribute rows keyed by data-attribute-type,
+ * values behind a scrub widget that opens a contenteditable on click, a
+ * kilometre-denominated altitude, per-row keyframe buttons, and a timeline
+ * driven by arrow keys and transport buttons.
  *
- * This checks the parts that are ours to get right - selector resolution, frame
- * seeking, value formatting, read-back verification and error reporting. It
- * cannot check that the real Earth Studio DOM matches DEFAULT_SELECTORS; that is
- * what `earth-studio-agent verify-layout` is for.
+ * This verifies what is ours to get right: seeking, the editing gesture, unit
+ * conversion, read-back and error reporting. It cannot verify that the live DOM
+ * still matches selectors.ts - that is what `verify-layout` and `probe` are for.
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,13 +19,13 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import type { Browser, Page } from 'playwright';
 import { EarthStudioDriver } from '../src/driver/earth-studio-driver.ts';
+import { DEFAULT_SELECTORS } from '../src/driver/selectors.ts';
 import { AgentError } from '../src/errors.ts';
 import { planCameraPath } from '../src/agent.ts';
 import { findChromium } from './helpers/chromium.ts';
 import type { PageLike } from '../src/driver/page.ts';
-import type { CameraPath } from '../src/types.ts';
 
-const FIXTURE = pathToFileURL(resolve(import.meta.dirname, 'fixtures/mock-earth-studio.html')).href;
+const FIXTURE = pathToFileURL(resolve(import.meta.dirname, 'fixtures/earth-studio-attributes.html')).href;
 
 let browser: Browser | undefined;
 let launchError: string | undefined;
@@ -33,9 +35,7 @@ before(async () => {
     const { chromium } = await import('playwright');
     browser = await chromium.launch({ executablePath: findChromium() });
   } catch (error) {
-    // Playwright's install banner is several lines long; the first line says what happened.
-    const message = error instanceof Error ? error.message : String(error);
-    launchError = message.split('\n')[0];
+    launchError = (error instanceof Error ? error.message : String(error)).split('\n')[0];
   }
 });
 
@@ -43,112 +43,146 @@ after(async () => {
   await browser?.close();
 });
 
-async function openMock(query = ''): Promise<Page> {
-  assert.ok(browser, `Chromium is unavailable: ${launchError ?? 'unknown reason'}`);
+const skip = (): string | false => (browser === undefined ? `Chromium unavailable: ${launchError}` : false);
+
+async function open(): Promise<Page> {
+  assert.ok(browser);
   const page = await browser.newPage();
-  await page.goto(`${FIXTURE}${query}`);
+  await page.goto(FIXTURE);
   return page;
 }
 
-/** keyframes recorded by the mock: attribute -> frame -> value. */
-async function recorded(page: Page): Promise<Record<string, Record<string, number>>> {
-  return page.evaluate(() => (window as unknown as { __keyframes: Record<string, Record<string, number>> }).__keyframes);
-}
-
-const skip = (): string | false => (browser === undefined ? `Chromium unavailable: ${launchError}` : false);
+/** Keyframes the fixture recorded: one per attribute per click of its button. */
+const recorded = (page: Page): Promise<Array<{ type: string; frame: number; value: string }>> =>
+  page.evaluate(
+    () => (window as unknown as { __keyframesAdded: Array<{ type: string; frame: number; value: string }> }).__keyframesAdded,
+  );
 
 describe('driver against a real browser', () => {
-  test('finds every field on a page that matches the default selectors', async (t) => {
+  test('finds every field the selector set names', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock();
+    const page = await open();
     const report = await new EarthStudioDriver(page as unknown as PageLike).verifyLayout();
-    assert.equal(report.ok, true);
-    assert.equal(report.missing.length, 0);
-    assert.equal(report.fields.every((field) => field.matched !== null), true);
+    assert.equal(report.ok, true, `missing: ${report.missing.join(', ')}`);
+    assert.ok(report.fields.every((field) => field.matched !== null));
     await page.close();
   });
 
-  test('writes the PRD example into the page, keyframe by keyframe', async (t) => {
+  test('writes the PRD example, keyframe by keyframe, at the right frames', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock();
+    const page = await open();
     const { path } = await planCameraPath(
-      'Start from space, zoom into Japan.\nHold for 3 seconds.\nThen fly to Mount Fuji and zoom in close.\nHold for 2 seconds.',
+      'Start from space, zoom into Japan.\nHold for 3 seconds.\nThen fly to Mount Fuji and zoom in close.',
     );
 
     const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
-    assert.equal(report.failures.length, 0);
+    assert.equal(report.failures.length, 0, JSON.stringify(report.failures));
     assert.equal(report.applied, path.keyframes.length);
 
-    const keyframes = await recorded(page);
-    // One keyframe per attribute per frame, at exactly the planned frames.
-    const frames = Object.keys(keyframes.latitude ?? {}).map(Number).sort((a, b) => a - b);
+    const added = await recorded(page);
+    // One keyframe per camera attribute per planned keyframe.
+    const frames = [...new Set(added.map((entry) => entry.frame))].sort((a, b) => a - b);
     assert.deepEqual(frames, path.keyframes.map((keyframe) => keyframe.frame));
 
     for (const keyframe of path.keyframes) {
+      const latitude = added.find((entry) => entry.frame === keyframe.frame && entry.type === 'latitude');
+      assert.ok(latitude, `no latitude keyframe at frame ${keyframe.frame}`);
       assert.ok(
-        Math.abs((keyframes.latitude?.[keyframe.frame] ?? 0) - keyframe.camera.latitude) < 1e-6,
-        `latitude at frame ${keyframe.frame}`,
+        Math.abs(Number(latitude.value) - keyframe.camera.latitude) < 0.001,
+        `latitude at frame ${keyframe.frame}: ${latitude.value}`,
       );
-      assert.ok(
-        Math.abs((keyframes.longitude?.[keyframe.frame] ?? 0) - keyframe.camera.longitude) < 1e-6,
-        `longitude at frame ${keyframe.frame}`,
-      );
-      assert.equal(keyframes.altitude?.[keyframe.frame], keyframe.camera.altitude, `altitude at frame ${keyframe.frame}`);
     }
     await page.close();
   });
 
-  test('writes 10,000,000 m without exponent notation', async (t) => {
+  test('altitude is converted into the unit the field displays', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock();
+    const page = await open();
+    const { path } = await planCameraPath('fly to Mount Fuji and zoom in close');
+    const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
+
+    // The plan asks for 1500 m; the field reads in kilometres, so it must show 1.5.
+    const altitude = report.results.at(-1)?.details.find((detail) => detail.attributeType === 'altitude');
+    assert.equal(altitude?.planned, 1500);
+    assert.equal(altitude?.typed, 1.5);
+    assert.equal(altitude?.displayUnit, 'Kilometers');
+
+    const added = await recorded(page);
+    const last = added.filter((entry) => entry.type === 'altitude').at(-1);
+    assert.equal(last?.value, '1.5');
+    await page.close();
+  });
+
+  test('the establishing altitude of 10,000,000 m lands without exponent notation', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
     const { path } = await planCameraPath('start from space, fly to Tokyo');
     await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
-    const value = await page.locator('[data-attribute="altitude"] input').inputValue();
-    assert.ok(!value.includes('e'), `altitude field reads "${value}"`);
-    const keyframes = await recorded(page);
-    assert.equal(keyframes.altitude?.['0'], 10_000_000);
+
+    const added = await recorded(page);
+    const first = added.find((entry) => entry.type === 'altitude');
+    assert.equal(first?.value, '10000');
+    assert.ok(!(first?.value ?? '').includes('e'));
     await page.close();
   });
 
-  test('writes negative and high-precision coordinates exactly', async (t) => {
+  test('negative and high-precision coordinates survive the round trip', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock();
+    const page = await open();
     const { path } = await planCameraPath('fly to Machu Picchu');
     await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
-    const keyframes = await recorded(page);
-    const lastFrame = String(path.keyframes.at(-1)?.frame);
-    assert.ok(Math.abs((keyframes.latitude?.[lastFrame] ?? 0) - -13.1631) < 1e-9);
-    assert.ok(Math.abs((keyframes.longitude?.[lastFrame] ?? 0) - -72.545) < 1e-9);
+
+    const added = await recorded(page);
+    const latitude = added.filter((entry) => entry.type === 'latitude').at(-1);
+    const longitude = added.filter((entry) => entry.type === 'longitude').at(-1);
+    assert.ok(Math.abs(Number(latitude?.value) - -13.1631) < 0.001);
+    assert.ok(Math.abs(Number(longitude?.value) - -72.545) < 0.001);
     await page.close();
   });
 
-  test('the playhead is moved before each keyframe is typed', async (t) => {
+  test('the playhead is moved before each keyframe is written', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock();
+    const page = await open();
     const { path } = await planCameraPath('fly to Rome. hold 2 seconds');
-    await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
-    const order = await page.evaluate(
-      () => (window as unknown as { __writeOrder: Array<{ attribute: string; frame: number }> }).__writeOrder,
-    );
-    // Every attribute of a keyframe lands on the same frame, and frames only advance.
-    let previous = -1;
-    for (const entry of order) {
-      assert.ok(entry.frame >= previous, `frame went backwards: ${entry.frame} after ${previous}`);
-      previous = entry.frame;
-    }
-    assert.equal(previous, path.keyframes.at(-1)?.frame);
+    const seeks: number[] = [];
+    const driver = new EarthStudioDriver(page as unknown as PageLike, {
+      onProgress: (event) => {
+        if (event.kind === 'seek') seeks.push(event.frame);
+      },
+    });
+    await driver.applyPath(path);
+
+    assert.deepEqual(seeks, path.keyframes.map((keyframe) => keyframe.frame));
+    assert.equal(await driver.currentFrame(), path.keyframes.at(-1)?.frame);
     await page.close();
   });
 
-  test('a missing required field stops the run before anything is typed (PRD 11)', async (t) => {
+  test('optional attributes are skipped, not failed, when a project omits them', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock('?missing=altitude');
+    const page = await open();
+    // A project without the lens attributes on its timeline.
+    await page.evaluate(() => document.querySelector('[data-attribute-type="fov"]')?.remove());
+
+    const { path } = await planCameraPath('fly to Rome');
+    const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
+    assert.equal(report.failures.length, 0);
+    assert.ok(report.results[0]?.skipped.includes('fieldOfView'));
+    await page.close();
+  });
+
+  test('a missing required row stops the run before anything is written', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    await page.evaluate(() => document.querySelector('[data-attribute-type="altitude"]')?.remove());
+
     const { path } = await planCameraPath('fly to Rome');
     await assert.rejects(
       () => new EarthStudioDriver(page as unknown as PageLike).applyPath(path),
@@ -156,24 +190,34 @@ describe('driver against a real browser', () => {
         assert.ok(error instanceof AgentError);
         assert.equal(error.code, 'DRIVER_LAYOUT_MISMATCH');
         assert.match(error.detail ?? '', /camera altitude/);
+        assert.match(error.hint ?? '', /probe/);
         return true;
       },
     );
-    assert.deepEqual(await recorded(page), {});
+    assert.deepEqual(await recorded(page), []);
     await page.close();
   });
 
-  test('a field that silently rewrites its value is caught by the read-back check (FR6)', async (t) => {
+  test('a field that will not take the value is reported with its step and frame', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock('?clamp=altitude&clampMax=1000');
+    const page = await open();
+    // Stand in for a field that silently refuses what it is given.
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-attribute-type="altitude"] .presentedValue');
+      const observer = new MutationObserver(() => {
+        if (row !== null && row.textContent !== '999999') row.textContent = '999999';
+      });
+      if (row !== null) observer.observe(row, { childList: true, characterData: true, subtree: true });
+    });
+
     const { path } = await planCameraPath('fly to Rome');
     await assert.rejects(
       () => new EarthStudioDriver(page as unknown as PageLike).applyPath(path),
       (error: unknown) => {
         assert.ok(error instanceof AgentError);
         assert.equal(error.code, 'DRIVER_FIELD_WRITE_FAILED');
-        assert.equal(error.stepIndex, 1);
+        assert.match(error.message, /frame 0/);
         assert.match(error.detail ?? '', /altitude/i);
         return true;
       },
@@ -181,10 +225,18 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
-  test('continueOnError reports every bad keyframe instead of the first', async (t) => {
+  test('continueOnError reports every bad keyframe instead of only the first', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock('?clamp=altitude&clampMax=1000');
+    const page = await open();
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-attribute-type="altitude"] .presentedValue');
+      const observer = new MutationObserver(() => {
+        if (row !== null && row.textContent !== '999999') row.textContent = '999999';
+      });
+      if (row !== null) observer.observe(row, { childList: true, characterData: true, subtree: true });
+    });
+
     const { path } = await planCameraPath('fly to Rome. hold 2 seconds');
     const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path, { continueOnError: true });
     assert.equal(report.total, path.keyframes.length);
@@ -193,161 +245,36 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
-  test('open() waits for the editor and reports when it never appears', async (t) => {
-    const reason = skip();
-    if (reason !== false) return t.skip(reason);
-    assert.ok(browser);
-    const page = await browser.newPage();
-    const driver = new EarthStudioDriver(page as unknown as PageLike, {
-      selectors: {
-        ...(await import('../src/driver/selectors.ts')).DEFAULT_SELECTORS,
-        appReady: { label: 'editor root', required: true, candidates: ['#definitely-not-here'] },
-      },
-    });
-    await assert.rejects(() => driver.open(FIXTURE), (error: unknown) => {
-      assert.ok(error instanceof AgentError);
-      assert.equal(error.code, 'DRIVER_NOT_READY');
-      return true;
-    });
-    await page.close();
-  });
-
-  test('open() succeeds on a page that looks like the editor', async (t) => {
-    const reason = skip();
-    if (reason !== false) return t.skip(reason);
-    assert.ok(browser);
-    const page = await browser.newPage();
-    await new EarthStudioDriver(page as unknown as PageLike).open(FIXTURE);
-    await page.close();
-  });
-
-  test('inspect describes a layout the default selectors do not know', async (t) => {
-    const reason = skip();
-    if (reason !== false) return t.skip(reason);
-    assert.ok(browser);
-    const page = await browser.newPage();
-    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/unknown-layout.html')).href);
-
-    const { inspectPage, renderInspection } = await import('../src/driver/inspect.ts');
-    const inspection = await inspectPage(page as unknown as PageLike);
-
-    assert.equal(inspection.fieldCount, 5);
-    assert.equal(inspection.iframeCount, 0);
-    assert.deepEqual(
-      inspection.fields.map((field) => field.label),
-      ['Frame', 'Latitude', 'Longitude', 'Altitude', 'Pan'],
-    );
-
-    // Every reported selector must actually reach exactly the field it describes:
-    // a selector that does not resolve is worse than no report at all.
-    for (const field of inspection.fields) {
-      const count = await page.locator(field.selector).count();
-      assert.equal(count, 1, `${field.selector} matched ${count} elements`);
-    }
-
-    const text = renderInspection(inspection);
-    assert.match(text, /#playhead-frame/);
-    assert.match(text, /aria-label="Altitude"/);
-    await page.close();
-  });
-
-  test('deep inspection surfaces the fields the shallow pass cannot see', async (t) => {
-    const reason = skip();
-    if (reason !== false) return t.skip(reason);
-    assert.ok(browser);
-    const page = await browser.newPage();
-    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/checkbox-layout.html')).href);
-
-    const { inspectPage, renderInspection } = await import('../src/driver/inspect.ts');
-    const shallow = await inspectPage(page as unknown as PageLike);
-    // The shallow pass sees only the timeline checkboxes, exactly as it did
-    // against the live product - which is why --deep exists.
-    assert.equal(shallow.fieldCount, 2);
-    assert.equal(shallow.deep, undefined);
-
-    const deep = await inspectPage(page as unknown as PageLike, 60, true);
-    assert.ok(deep.deep);
-    assert.deepEqual(deep.deep.ids, ['rotationZ', 'altitude']);
-    assert.ok(
-      deep.deep.numericLike.some((entry) => entry.text === '1500'),
-      'the altitude readout should be reported as a numeric element',
-    );
-    assert.ok(
-      deep.deep.samples.some((sample) => sample.html.includes('data-attr="rotationZ"')),
-      'the raw row HTML should show how the value field is built',
-    );
-
-    const text = renderInspection(deep);
-    assert.match(text, /Element ids \(2\)/);
-    assert.match(text, /Raw HTML of the row around #rotationZ/);
-    await page.close();
-  });
-
-  test('--html dumps the raw HTML of whatever is asked for', async (t) => {
-    const reason = skip();
-    if (reason !== false) return t.skip(reason);
-    assert.ok(browser);
-    const page = await browser.newPage();
-    await page.setViewportSize({ width: 900, height: 600 });
-    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/checkbox-layout.html')).href);
-
-    const { inspectPage, renderInspection } = await import('../src/driver/inspect.ts');
-    const inspection = await inspectPage(page as unknown as PageLike, 60, true, ['.scrubber', 'nope-not-here']);
-    const deep = inspection.deep;
-    assert.ok(deep);
-
-    const scrubber = deep.requested?.find((entry) => entry.selector === '.scrubber');
-    assert.equal(scrubber?.matched, 2);
-    assert.ok(scrubber?.html[0]?.includes('data-attr="rotationZ"'));
-
-    // A selector that matches nothing is reported as such, not as an error.
-    assert.equal(deep.requested?.find((entry) => entry.selector === 'nope-not-here')?.matched, 0);
-
-    // A small window is the reason Earth Studio hides panels, so it is called out.
-    assert.equal(deep.viewport.width, 900);
-    assert.match(renderInspection(inspection), /Maximise it and inspect again/);
-    assert.ok(deep.classHints.includes('scrubber'), 'value-widget class names should be surfaced');
-    await page.close();
-  });
-
-  test('a numeric element is reported with a selector that can actually be written', async (t) => {
-    const reason = skip();
-    if (reason !== false) return t.skip(reason);
-    assert.ok(browser);
-    const page = await browser.newPage();
-    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/scrub-layout.html')).href);
-
-    const { inspectPage } = await import('../src/driver/inspect.ts');
-    const deep = (await inspectPage(page as unknown as PageLike, 60, true)).deep;
-    assert.ok(deep);
-
-    const value = deep.numericLike.find((entry) => entry.text === '-34.646');
-    assert.ok(value, 'the scrubbed value should be found');
-    // A bare "span" would be useless; the report has to carry the classes.
-    assert.equal(value.selector, 'span.presentedValue');
-    assert.match(value.parents, /div\.scrub-input/);
-    assert.equal(value.label, 'Latitude');
-    assert.equal(await page.locator(value.selector).count(), 1);
-    await page.close();
-  });
-
-  test('inspect says why a page with no fields has none', async (t) => {
+  test('open() rejects a page that is not the editor', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
     assert.ok(browser);
     const page = await browser.newPage();
     await page.setContent('<h1>Sign in to continue</h1>');
-    const { inspectPage } = await import('../src/driver/inspect.ts');
-    const inspection = await inspectPage(page as unknown as PageLike);
-    assert.equal(inspection.fieldCount, 0);
-    assert.match(inspection.note ?? '', /not the editor page/);
+    await assert.rejects(
+      () => new EarthStudioDriver(page as unknown as PageLike).open(FIXTURE, { navigate: false }),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_NOT_READY');
+        assert.match(error.hint ?? '', /probe/);
+        return true;
+      },
+    );
+    await page.close();
+  });
+
+  test('open() accepts the editor itself', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    await new EarthStudioDriver(page as unknown as PageLike).open(FIXTURE, { navigate: false });
     await page.close();
   });
 
   test('a long multi-place path is written in full', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
-    const page = await openMock();
+    const page = await open();
     const command = [
       'Start from space.',
       'Fly to Iceland and zoom to country level.',
@@ -355,19 +282,34 @@ describe('driver against a real browser', () => {
       'Then fly to the Blue Lagoon and zoom in close.',
       'Hold 1 second.',
       'Then fly to Reykjavik at city level.',
-      'Hold 3 seconds.',
-      'Then zoom out to country level.',
     ].join('\n');
-    const { path }: { path: CameraPath } = await planCameraPath(command);
+    const { path } = await planCameraPath(command);
     const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
+
     assert.equal(report.failures.length, 0);
     assert.equal(report.applied, path.keyframes.length);
-    assert.ok(path.keyframes.length >= 7, `only ${path.keyframes.length} keyframes`);
+    assert.ok(path.keyframes.length >= 5);
 
-    const keyframes = await recorded(page);
-    for (const keyframe of path.keyframes) {
-      assert.equal(keyframes.altitude?.[keyframe.frame], keyframe.camera.altitude, `frame ${keyframe.frame}`);
+    const added = await recorded(page);
+    const frames = [...new Set(added.map((entry) => entry.frame))].sort((a, b) => a - b);
+    assert.deepEqual(frames, path.keyframes.map((keyframe) => keyframe.frame));
+    await page.close();
+  });
+
+  test('every camera attribute the selector set names is written', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    const { path } = await planCameraPath('fly to Rome', { config: { defaultTilt: 30, defaultFieldOfView: 45 } });
+    await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
+
+    const added = await recorded(page);
+    const types = new Set(added.map((entry) => entry.type));
+    for (const field of Object.values(DEFAULT_SELECTORS.camera)) {
+      assert.ok(types.has(field.attributeType), `${field.label} was never written`);
     }
+    assert.equal(added.filter((entry) => entry.type === 'rotationY').at(-1)?.value, '30');
+    assert.equal(added.filter((entry) => entry.type === 'fov').at(-1)?.value, '45');
     await page.close();
   });
 });

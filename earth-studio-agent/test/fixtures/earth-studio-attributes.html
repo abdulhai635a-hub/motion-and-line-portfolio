@@ -57,6 +57,44 @@
       <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Altitude" title-tooltip="Add keyframe"></button>
     </span>
   </li>
+  <li class="attribute visible" data-attribute-type="rotationX">
+    <span class="title">Pan</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input rotationInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">0</span></span><span class="unit rotations" title="Rotations">x</span></span>
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">355.743</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Pan" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
+  <li class="attribute visible" data-attribute-type="rotationY">
+    <span class="title">Tilt</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">0</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Tilt" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
+  <li class="attribute visible" data-attribute-type="rotationZ">
+    <span class="title">Roll</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input rotationInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">0</span></span><span class="unit rotations" title="Rotations">x</span></span>
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">0</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Roll" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
+  <li class="attribute visible" data-attribute-type="fov">
+    <span class="title">Field of View</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">20</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Field of View" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
 </ul>
 </div>
 <script>
@@ -72,7 +110,11 @@
   var PRECISE = {
     longitude: '131.5689731',
     latitude: '29.3228910257184',
-    altitude: '63170.4821'
+    altitude: '63170.4821',
+    rotationX: '355.7431102',
+    rotationY: '0',
+    rotationZ: '0',
+    fov: '20'
   };
 
   document.querySelectorAll('.scrub-input').forEach(function (widget) {
@@ -170,7 +212,9 @@
       window.__keyframesAdded.push({
         type: row ? row.getAttribute('data-attribute-type') : '',
         frame: frame,
-        value: row ? row.querySelector('.presentedValue').textContent : ''
+        // The degrees widget, not the whole-rotations one beside it in
+        // longitude and the rotation rows.
+        value: row ? row.querySelector('.scrub-input.valueInput .presentedValue').textContent : ''
       });
       button.classList.add('has-keyframe');
     });

@@ -52,7 +52,10 @@ describe('attribute survey', () => {
     const page = await open();
     const survey = await surveyAttributes(page as unknown as PageLike);
 
-    assert.deepEqual(survey.rows.map((row) => row.type), ['longitude', 'latitude', 'altitude']);
+    assert.deepEqual(
+      survey.rows.map((row) => row.type),
+      ['longitude', 'latitude', 'altitude', 'rotationX', 'rotationY', 'rotationZ', 'fov'],
+    );
     assert.equal(survey.rows[1]?.title, 'Latitude');
     assert.equal(survey.rows[1]?.widgets[0]?.value, '-15.018');
     await page.close();

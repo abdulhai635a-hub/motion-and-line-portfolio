@@ -21,7 +21,7 @@ import { planCameraPath } from '../src/agent.ts';
 import { AgentError } from '../src/errors.ts';
 import { findChromium } from './helpers/chromium.ts';
 
-const FIXTURE = pathToFileURL(resolve(import.meta.dirname, 'fixtures/mock-earth-studio.html')).href;
+const FIXTURE = pathToFileURL(resolve(import.meta.dirname, 'fixtures/earth-studio-attributes.html')).href;
 
 let child: ChildProcess | undefined;
 let endpoint: string | undefined;
@@ -134,7 +134,7 @@ describe('attaching over CDP', () => {
     const tabs = await session.listTabs();
     assert.ok(tabs.length >= 1);
     assert.equal(tabs.filter((tab) => tab.attached).length, 1, 'exactly one tab should be marked attached');
-    assert.ok(tabs.some((tab) => tab.url.includes('mock-earth-studio')));
+    assert.ok(tabs.some((tab) => tab.url.includes('earth-studio-attributes')));
     await session.close();
   });
 

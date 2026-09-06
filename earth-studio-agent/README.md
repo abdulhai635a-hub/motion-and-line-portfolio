@@ -206,12 +206,42 @@ stick is reported with its step, frame and field rather than being skipped
   hint:   2 of 5 keyframes were written before this.
 ```
 
-### Selectors need verifying once
+### How a value is entered
 
-> **The default UI selectors in `src/driver/selectors.ts` are candidates, not
-> verified fact.** Earth Studio publishes no stable DOM contract, and they have
-> not been checked against a signed-in session — `verifiedOn` is `unverified`.
-> Run `verify-layout` before your first real run.
+Earth Studio has no inputs for the camera values. Each attribute is a row keyed
+by `data-attribute-type`, and its value sits behind a scrub widget:
+
+```html
+<li class="attribute" data-attribute-type="latitude">
+  <span class="title">Latitude</span>
+  <span class="actions">
+    <span class="value">
+      <span class="scrub-input valueInput" tabindex="0">
+        <span class="presentedValueContainer"><span class="presentedValue">29.323</span></span>
+        <span class="unit degrees" title="Degrees">°</span>
+    <button data-action="click:addKeyframe" title-tooltip="Add keyframe">
+```
+
+Clicking the widget inserts a `contenteditable` holding the full-precision
+value; Enter commits it, and the keyframe button beside it turns the value into
+a keyframe. The playhead has no field at all — its readout only toggles between
+frames and a timecode — so it is moved with the arrow keys (Shift steps five
+frames) or the transport buttons.
+
+Two details are easy to get wrong and are handled explicitly:
+
+- **Altitude reads in kilometres** while the agent plans in metres, so a planned
+  1500 m is typed as `1.5`. The scale is derived at run time by comparing the
+  rounded value on screen with the full-precision value in the edit box, so it
+  stays right if Earth Studio switches units by magnitude.
+- **Longitude and the rotations carry two widgets** — whole turns beside
+  degrees — so the degrees one is named rather than taken by position.
+
+### Selectors, and re-verifying them
+
+The selectors in `src/driver/selectors.ts` were read off a live, signed-in
+session; `verifiedOn` says when. Google publishes no stable DOM contract, so
+they can still go stale.
 
 This is PRD 11's mitigation, built in: every selector lives in that one file,
 each field lists several candidates, and `verify-layout` reports exactly which
@@ -225,8 +255,28 @@ Missing required fields: camera altitude
   MISSING camera altitude        tried 4 candidates
 ```
 
-When fields come back missing, `inspect` dumps what the page really contains —
-every editable field, its label, its attributes and a selector that reaches it:
+`probe` is the quickest way to re-derive them: it lists every attribute row the
+project shows, with its type, value and displayed unit, and suggests a selector
+for each.
+
+```bash
+node src/cli.ts probe --cdp http://localhost:9222
+```
+
+```
+  data-attribute-type    title              value        unit
+  latitude               Latitude           29.323       ° (Degrees)
+  altitude               Altitude           63170        km (Kilometers)
+  rotationX              Pan                355.743      ° (Degrees)   [2 widgets]
+```
+
+`probe --attribute latitude --type-value 12.5` clicks one value and reports what
+the page does at each step, ending with Escape so nothing is changed;
+`probe --playhead` does the same for the transport keys and buttons.
+
+When something is missing that `probe` cannot explain, `inspect` dumps what the
+page really contains — every editable field, its label, its attributes and a
+selector that reaches it:
 
 ```bash
 node src/cli.ts inspect --cdp http://localhost:9222
@@ -254,9 +304,10 @@ writing nothing.
 ### Camera conventions
 
 `pan`, `tilt`, `roll` and field of view are written at every keyframe from
-`--tilt` / `--fov` and the defaults in `src/config.ts`. The default tilt of `0`
-assumes 0 degrees points straight down; if your Earth Studio build treats tilt
-differently, set `--tilt` to suit. Transitions are left at Earth Studio's own
+`--tilt` / `--fov` and the defaults in `src/config.ts`. Earth Studio names the
+rotations by axis — Pan is `rotationX`, Tilt `rotationY`, Roll `rotationZ`. The
+default tilt of `0` assumes 0 degrees points straight down; if your Earth Studio
+build treats tilt differently, set `--tilt` to suit. Transitions are left at Earth Studio's own
 default easing, which PRD 11 scopes as linear/auto-ease for v1.
 
 ## The .esp experiment
@@ -278,7 +329,7 @@ Studio rejects it, that is the expected failure mode, not a bug.
 ## Development
 
 ```bash
-npm test          # 163 tests, ~13s
+npm test          # 205 tests, ~40s
 npm run typecheck # tsc --noEmit, strict
 ```
 
@@ -286,13 +337,14 @@ The suite covers the parser, geocoder, timeline, log, `.esp` writer, driver and
 CLI. Two parts are worth calling out:
 
 - **`test/driver.browser.test.ts`** drives a real Chromium against
-  `test/fixtures/mock-earth-studio.html`, a stand-in that reproduces the one
-  behaviour the driver depends on: committing a value in an attribute field
-  creates a keyframe for it at the current frame. It verifies selector
-  resolution, frame seeking, number formatting, read-back checking and error
-  reporting. It **cannot** verify that the real Earth Studio DOM matches
-  `DEFAULT_SELECTORS` — that is what `verify-layout` is for. The tests skip
-  themselves when no browser is available.
+  `test/fixtures/earth-studio-attributes.html`, which reproduces the markup and
+  the behaviour read off the live editor: rows keyed by `data-attribute-type`,
+  a scrub widget that opens a contenteditable on click, a kilometre-denominated
+  altitude, per-row keyframe buttons, and a timeline driven by keys and
+  transport buttons. It verifies seeking, the editing gesture, unit conversion,
+  read-back and error reporting. It **cannot** verify that the live DOM still
+  matches `DEFAULT_SELECTORS` — that is what `verify-layout` and `probe` are
+  for. The tests skip themselves when no browser is available.
 - **`test/driver.cdp.test.ts`** starts a browser with `--remote-debugging-port`
   exactly as the instructions above tell you to, attaches to it, writes a whole
   plan into it, and checks that disconnecting leaves it running.
@@ -313,9 +365,9 @@ CLI. Two parts are worth calling out:
 
 ## Known limits
 
-- The selectors are unverified against the live product (see above). This is the
-  one thing that needs a signed-in session to confirm, and it is why
-  `verify-layout` exists.
+- The selectors match Earth Studio as of the date in `verifiedOn`, and Google
+  can change the interface without notice. `verify-layout` checks them on every
+  run and `probe` re-derives them; both need a signed-in session.
 - The built-in place table is a curated ~220 entries; anything else needs
   `--online`.
 - `pan_to` moves the camera to the named place; it does not yet compute a
