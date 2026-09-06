@@ -206,6 +206,13 @@ stick is reported with its step, frame and field rather than being skipped
   hint:   2 of 5 keyframes were written before this.
 ```
 
+### Verified end to end
+
+This has been run against the live product: a signed-in Earth Studio session,
+the command from PRD 7, four keyframes written at frames 0, 120, 210 and 330,
+each with latitude, longitude and altitude, and the resulting path playable in
+Earth Studio. `probe` derived every selector below from that session.
+
 ### How a value is entered
 
 Earth Studio has no inputs for the camera values. Each attribute is a row keyed
@@ -228,14 +235,22 @@ a keyframe. The playhead has no field at all — its readout only toggles betwee
 frames and a timecode — so it is moved with the arrow keys (Shift steps five
 frames) or the transport buttons.
 
-Two details are easy to get wrong and are handled explicitly:
+Four details are easy to get wrong, each of which broke a live run before it
+was handled:
 
-- **Altitude reads in kilometres** while the agent plans in metres, so a planned
-  1500 m is typed as `1.5`. The scale is derived at run time by comparing the
-  rounded value on screen with the full-precision value in the edit box, so it
-  stays right if Earth Studio switches units by magnitude.
+- **Altitude is shown in kilometres but typed in metres**, and the unit label
+  even changes to "Meters" while the edit box is open. Nothing here trusts the
+  label alone: the scale comes from comparing the rounded value on screen with
+  the full-precision value in the edit box, so a planned 1500 m is typed as
+  1500 whatever the field happens to be displaying.
+- **The unit switches by magnitude.** Writing 1500 m into a field reading
+  kilometres leaves it reading "1500 m", so the value is read back in the unit
+  it ends up in, not the one it started in.
 - **Longitude and the rotations carry two widgets** — whole turns beside
   degrees — so the degrees one is named rather than taken by position.
+- **Attributes a project has not added to its timeline** are in the DOM but
+  render to nothing. Optional ones (Roll, Field of View) are skipped and named
+  in the run log rather than waited on until they time out.
 
 ### Selectors, and re-verifying them
 
