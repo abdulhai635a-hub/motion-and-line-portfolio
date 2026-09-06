@@ -198,6 +198,25 @@ describe('playhead probe', () => {
     await page.close();
   });
 
+  test('releases focus before pressing keys, or every key looks dead', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    const report = await probePlayhead(page as unknown as PageLike);
+
+    // Clicking the readout focuses it (it carries tabindex=0), and keystrokes
+    // then go to the control rather than the app. The first live run of this
+    // probe reported every transport key as doing nothing for exactly that
+    // reason, so the focus hand-back is asserted here.
+    const released = report.steps.find((step) => step.what === 'after releasing focus');
+    assert.ok(released, 'the probe should hand focus back');
+    assert.equal(released.focused, 'body');
+    for (const step of report.steps.slice(report.steps.indexOf(released))) {
+      assert.equal(step.focused, 'body', `focus was on ${step.focused} at "${step.what}"`);
+    }
+    await page.close();
+  });
+
   test('the format cycle is recorded, so a frame number can be read back', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

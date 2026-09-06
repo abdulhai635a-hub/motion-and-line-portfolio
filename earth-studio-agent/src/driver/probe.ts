@@ -288,13 +288,25 @@ export async function probePlayhead(page: PageLike): Promise<PlayheadReport> {
     await record('switching the readout to frames');
   }
 
-  // Transport keys. Each is pressed with the page body focused, which is where
-  // focus sits after the readout is clicked.
+  // Clicking the readout leaves focus on it, and it is focusable (tabindex=0),
+  // so keystrokes go to the control instead of the app and every transport key
+  // looks dead. Hand focus back to the document before pressing anything.
+  await page.evaluate<void>(
+    new Function(`
+      const active = document.activeElement;
+      if (active !== null && typeof active.blur === 'function') active.blur();
+      if (document.body !== null) document.body.focus();
+    `) as () => void,
+  );
+  await record('after releasing focus');
+
   const presses: Array<[string, string, number]> = [
     ['Home', 'Home', 1],
     ['ArrowRight x5', 'ArrowRight', 5],
     ['ArrowLeft x2', 'ArrowLeft', 2],
+    ['Shift+ArrowRight', 'Shift+ArrowRight', 1],
     ['PageDown', 'PageDown', 1],
+    ['PageUp', 'PageUp', 1],
     ['End', 'End', 1],
     ['Home again', 'Home', 1],
   ];
