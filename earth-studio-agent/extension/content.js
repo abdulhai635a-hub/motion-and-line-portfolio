@@ -1213,9 +1213,6 @@
 
   // src/driver/attribute-writer.ts
   var rowSelector2 = (type) => `[data-attribute-type="${type}"]`;
-  function quote(value) {
-    return JSON.stringify(value);
-  }
   async function readRow(page, target) {
     if (typeof page.evaluate !== "function") {
       throw new AgentError("DRIVER_NOT_READY", "This page cannot be read.");
@@ -1223,25 +1220,31 @@
     const row = rowSelector2(target.attributeType);
     const widget = `${row} ${target.widget}`;
     return page.evaluate(
-      new Function(`
-      const widget = document.querySelector(${quote(widget)});
-      const row = document.querySelector(${quote(row)});
-      const button = row === null ? null : row.querySelector('[data-action="click:addKeyframe"]');
-      if (widget === null) {
-        return { found: false, displayed: '', unitTitle: '', editBox: null, hasKeyframe: false, hasKeyframeButton: button !== null };
-      }
-      const box = widget.querySelector('[contenteditable="true"], [contenteditable=""]');
-      return {
-        found: true,
-        displayed: (widget.querySelector('.presentedValue') || {}).textContent || '',
-        unitTitle: (widget.querySelector('.unit') || {}).getAttribute
-          ? widget.querySelector('.unit').getAttribute('title') || ''
-          : '',
-        editBox: box === null ? null : (box.textContent || ''),
-        hasKeyframe: button !== null && button.classList.contains('has-keyframe'),
-        hasKeyframeButton: button !== null,
-      };
-    `)
+      ({ row: rowSelectorText, widget: widgetSelectorText }) => {
+        const widgetNode = document.querySelector(widgetSelectorText);
+        const rowNode = document.querySelector(rowSelectorText);
+        const button = rowNode === null ? null : rowNode.querySelector('[data-action="click:addKeyframe"]');
+        if (widgetNode === null) {
+          return {
+            found: false,
+            displayed: "",
+            unitTitle: "",
+            editBox: null,
+            hasKeyframe: false,
+            hasKeyframeButton: button !== null
+          };
+        }
+        const box = widgetNode.querySelector('[contenteditable="true"], [contenteditable=""]');
+        return {
+          found: true,
+          displayed: widgetNode.querySelector(".presentedValue")?.textContent ?? "",
+          unitTitle: widgetNode.querySelector(".unit")?.getAttribute("title") ?? "",
+          editBox: box === null ? null : box.textContent ?? "",
+          hasKeyframe: button !== null && button.classList.contains("has-keyframe"),
+          hasKeyframeButton: button !== null
+        };
+      },
+      { row, widget }
     );
   }
   async function writeAttribute(page, target, planned, options = {}) {
@@ -1352,14 +1355,12 @@
       ["forced click", async () => page.click(button, { timeout: timeoutMs, force: true })],
       ["click from inside the page", async () => {
         if (typeof page.evaluate !== "function") throw new Error("the page cannot run script");
-        const clicked = await page.evaluate(
-          new Function(`
-          const node = document.querySelector(${quote(button)});
+        const clicked = await page.evaluate((selector) => {
+          const node = document.querySelector(selector);
           if (node === null) return false;
           node.click();
           return true;
-        `)
-        );
+        }, button);
         if (!clicked) throw new Error("the button is not in the page");
       }]
     ];
@@ -1421,12 +1422,10 @@
       throw new AgentError("DRIVER_NOT_READY", "This page cannot be read.");
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const text = await page.evaluate(
-        new Function(`
-        const node = document.querySelector(${JSON.stringify(readout)});
-        return node === null ? '' : (node.textContent || '').trim();
-      `)
-      );
+      const text = await page.evaluate((selector) => {
+        const node = document.querySelector(selector);
+        return node === null ? "" : (node.textContent ?? "").trim();
+      }, readout);
       if (/^-?\d+$/.test(text)) return Number(text);
       if (text === "") {
         throw new AgentError("DRIVER_FRAME_SEEK_FAILED", "The timecode readout is not on the page.", {
@@ -1444,13 +1443,11 @@
   }
   async function releaseFocus(page) {
     if (typeof page.evaluate !== "function") return;
-    await page.evaluate(
-      new Function(`
+    await page.evaluate(() => {
       const active = document.activeElement;
-      if (active !== null && typeof active.blur === 'function') active.blur();
-      if (document.body !== null && typeof document.body.focus === 'function') document.body.focus();
-    `)
-    );
+      active?.blur?.();
+      document.body?.focus?.();
+    });
   }
   async function seekToFrame(page, frame, options = {}) {
     const { readout = READOUT, settleMs = 250, maxPresses = 4e3 } = options;
@@ -1700,16 +1697,14 @@
     /** Present, rendered and clickable - not merely in the DOM. */
     async isUsable(selector) {
       if (typeof this.page.evaluate !== "function") return this.exists(selector);
-      return this.page.evaluate(
-        new Function(`
-        const node = document.querySelector(${JSON.stringify(selector)});
+      return this.page.evaluate((target) => {
+        const node = document.querySelector(target);
         if (node === null) return false;
         const rect = node.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) return false;
         const style = window.getComputedStyle(node);
-        return style.visibility !== 'hidden' && style.display !== 'none';
-      `)
-      );
+        return style.visibility !== "hidden" && style.display !== "none";
+      }, selector);
     }
   };
   function toTarget(attribute) {
@@ -1782,13 +1777,9 @@
       element.focus?.();
       sendKey(element, key);
     }
-    /**
-     * Runs a function in this page. The driver builds these with `new Function`,
-     * which a content script may execute in its own world; the DOM it touches is
-     * the shared one, which is all the driver needs.
-     */
-    async evaluate(pageFunction) {
-      return pageFunction();
+    /** Runs a function against this document. There is nothing to serialise. */
+    async evaluate(pageFunction, arg) {
+      return pageFunction(arg);
     }
     keyboard = {
       press: async (key) => {

@@ -99,13 +99,9 @@ export class DomPage implements PageLike {
     sendKey(element, key);
   }
 
-  /**
-   * Runs a function in this page. The driver builds these with `new Function`,
-   * which a content script may execute in its own world; the DOM it touches is
-   * the shared one, which is all the driver needs.
-   */
-  async evaluate<R>(pageFunction: () => R): Promise<R> {
-    return pageFunction();
+  /** Runs a function against this document. There is nothing to serialise. */
+  async evaluate<R, A = undefined>(pageFunction: (arg: A) => R, arg?: A): Promise<R> {
+    return pageFunction(arg as A);
   }
 
   readonly keyboard = {

@@ -273,16 +273,14 @@ export class EarthStudioDriver {
   /** Present, rendered and clickable - not merely in the DOM. */
   private async isUsable(selector: string): Promise<boolean> {
     if (typeof this.page.evaluate !== 'function') return this.exists(selector);
-    return this.page.evaluate<boolean>(
-      new Function(`
-        const node = document.querySelector(${JSON.stringify(selector)});
-        if (node === null) return false;
-        const rect = node.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return false;
-        const style = window.getComputedStyle(node);
-        return style.visibility !== 'hidden' && style.display !== 'none';
-      `) as () => boolean,
-    );
+    return this.page.evaluate<boolean, string>((target) => {
+      const node = document.querySelector(target);
+      if (node === null) return false;
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return false;
+      const style = window.getComputedStyle(node);
+      return style.visibility !== 'hidden' && style.display !== 'none';
+    }, selector);
   }
 }
 

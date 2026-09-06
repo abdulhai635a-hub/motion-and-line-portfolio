@@ -124,25 +124,26 @@ export async function probeSelector(
   const steps: InteractionStep[] = [];
 
   const snapshot = async (what: string): Promise<void> => {
-    const state = await page.evaluate!<Omit<InteractionStep, 'what'>>(
-      new Function(`
-        const row = document.querySelector('${rowSelector.replace(/'/g, "\\\\'")}');
-        const active = document.activeElement;
-        const describe = (element) => {
-          if (element === null) return '(none)';
-          const classes = element.className ? String(element.className).trim().split(/\\\\s+/).join('.') : '';
-          return element.tagName.toLowerCase() + (classes === '' ? '' : '.' + classes);
-        };
-        const editable = row === null ? [] : Array.from(
-          row.querySelectorAll('input, textarea, [contenteditable="true"], [contenteditable=""]'),
-        ).map(describe);
-        return {
-          html: row === null ? '(row not found)' : row.outerHTML.slice(0, 1200),
-          focused: describe(active),
-          editable,
-        };
-      `) as () => Omit<InteractionStep, 'what'>,
-    );
+    const state = await page.evaluate!<Omit<InteractionStep, 'what'>, string>((selector) => {
+      const row = document.querySelector(selector);
+      const active = document.activeElement;
+      const describe = (element: Element | null): string => {
+        if (element === null) return '(none)';
+        const classes = element.className ? String(element.className).trim().split(/\s+/).join('.') : '';
+        return element.tagName.toLowerCase() + (classes === '' ? '' : `.${classes}`);
+      };
+      const editable =
+        row === null
+          ? []
+          : Array.from(row.querySelectorAll('input, textarea, [contenteditable="true"], [contenteditable=""]')).map(
+              describe,
+            );
+      return {
+        html: row === null ? '(row not found)' : row.outerHTML.slice(0, 1200),
+        focused: describe(active),
+        editable,
+      };
+    }, rowSelector);
     steps.push({ what, ...state });
   };
 
@@ -240,8 +241,9 @@ export async function probePlayhead(page: PageLike, settleMs = 400): Promise<Pla
 
   let readoutSelector = '';
   for (const candidate of READOUT_CANDIDATES) {
-    const found = await page.evaluate<boolean>(
-      new Function(`return document.querySelector(${JSON.stringify(candidate)}) !== null;`) as () => boolean,
+    const found = await page.evaluate<boolean, string>(
+      (selector) => document.querySelector(selector) !== null,
+      candidate,
     );
     if (found) {
       readoutSelector = candidate;
@@ -260,23 +262,21 @@ export async function probePlayhead(page: PageLike, settleMs = 400): Promise<Pla
     // a keystroke returned stale text that made the keys look inert or absurd
     // ("Home" appearing to give frame 7). Give the app a moment to settle.
     await new Promise((done) => setTimeout(done, settleMs));
-    const state = await page.evaluate!<Omit<PlayheadStep, 'what'>>(
-      new Function(`
-        const nodes = Array.from(document.querySelectorAll(${JSON.stringify(readoutSelector)}));
-        const active = document.activeElement;
-        const describe = (element) => {
-          if (element === null) return '(none)';
-          const classes = element.className ? String(element.className).trim().split(/\\s+/).join('.') : '';
-          return element.tagName.toLowerCase() + (classes === '' ? '' : '.' + classes);
-        };
-        const texts = nodes.map((node) => (node.textContent || '').trim());
-        return {
-          readout: texts.length === 0 ? '(gone)' : texts[0],
-          allReadouts: texts,
-          focused: describe(active),
-        };
-      `) as () => Omit<PlayheadStep, 'what'>,
-    );
+    const state = await page.evaluate!<Omit<PlayheadStep, 'what'>, string>((selector) => {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      const active = document.activeElement;
+      const describe = (element: Element | null): string => {
+        if (element === null) return '(none)';
+        const classes = element.className ? String(element.className).trim().split(/\s+/).join('.') : '';
+        return element.tagName.toLowerCase() + (classes === '' ? '' : `.${classes}`);
+      };
+      const texts = nodes.map((node) => (node.textContent ?? '').trim());
+      return {
+        readout: texts.length === 0 ? '(gone)' : (texts[0] ?? ''),
+        allReadouts: texts,
+        focused: describe(active),
+      };
+    }, readoutSelector);
     steps.push({ what, ...state });
   };
 
@@ -302,13 +302,11 @@ export async function probePlayhead(page: PageLike, settleMs = 400): Promise<Pla
   // Clicking the readout leaves focus on it, and it is focusable (tabindex=0),
   // so keystrokes go to the control instead of the app and every transport key
   // looks dead. Hand focus back to the document before pressing anything.
-  await page.evaluate<void>(
-    new Function(`
-      const active = document.activeElement;
-      if (active !== null && typeof active.blur === 'function') active.blur();
-      if (document.body !== null) document.body.focus();
-    `) as () => void,
-  );
+  await page.evaluate<void, undefined>(() => {
+    const active = document.activeElement as HTMLElement | null;
+    active?.blur?.();
+    document.body?.focus?.();
+  });
   await record('after releasing focus');
 
   const presses: Array<[string, string, number]> = [

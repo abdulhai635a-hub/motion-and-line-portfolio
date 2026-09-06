@@ -200,19 +200,10 @@ async function deepInspect(page: PageLike, htmlSelectors: string[] = []): Promis
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be inspected.');
   }
-  // The selectors travel into the page through the global, because evaluate()
-  // here takes no argument.
-  const wanted = JSON.stringify(htmlSelectors);
-  const result = await page.evaluate<DeepInspection>(new Function(`
-    const REQUESTED = ${wanted};
-    return (${deepInspectBody.toString()})(REQUESTED);
-  `) as () => DeepInspection);
-  return result;
-}
-
-/** Runs inside the page. Kept as a named function so it can be stringified. */
-function deepInspectBody(requested: string[]): DeepInspection {
-  return ((): DeepInspection => {
+  // The selectors are passed as an argument. Building the function from a
+  // string would work in Playwright but is forbidden by a Chrome extension's
+  // content security policy, and this code runs in both.
+  return page.evaluate<DeepInspection, string[]>((requested) => {
     const attributesOf = (element: Element): Record<string, string> => {
       const result: Record<string, string> = {};
       for (const attribute of Array.from(element.attributes)) {
@@ -310,7 +301,7 @@ function deepInspectBody(requested: string[]): DeepInspection {
       samples,
       requested: requestedHtml.length === 0 ? undefined : requestedHtml,
     };
-  })();
+  }, htmlSelectors);
 }
 
 export function renderInspection(inspection: Inspection): string {

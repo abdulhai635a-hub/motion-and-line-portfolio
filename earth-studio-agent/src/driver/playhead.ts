@@ -54,12 +54,10 @@ export async function readFrame(page: PageLike, readout = READOUT, settleMs = 25
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be read.');
   }
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const text = await page.evaluate<string>(
-      new Function(`
-        const node = document.querySelector(${JSON.stringify(readout)});
-        return node === null ? '' : (node.textContent || '').trim();
-      `) as () => string,
-    );
+    const text = await page.evaluate<string, string>((selector) => {
+      const node = document.querySelector(selector);
+      return node === null ? '' : (node.textContent ?? '').trim();
+    }, readout);
     if (/^-?\d+$/.test(text)) return Number(text);
     if (text === '') {
       throw new AgentError('DRIVER_FRAME_SEEK_FAILED', 'The timecode readout is not on the page.', {
@@ -80,13 +78,11 @@ export async function readFrame(page: PageLike, readout = READOUT, settleMs = 25
 /** Takes focus off any control, so keystrokes reach the application. */
 export async function releaseFocus(page: PageLike): Promise<void> {
   if (typeof page.evaluate !== 'function') return;
-  await page.evaluate<void>(
-    new Function(`
-      const active = document.activeElement;
-      if (active !== null && typeof active.blur === 'function') active.blur();
-      if (document.body !== null && typeof document.body.focus === 'function') document.body.focus();
-    `) as () => void,
-  );
+  await page.evaluate<void, undefined>(() => {
+    const active = document.activeElement as HTMLElement | null;
+    active?.blur?.();
+    document.body?.focus?.();
+  });
 }
 
 /**

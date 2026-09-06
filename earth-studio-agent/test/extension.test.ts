@@ -13,6 +13,8 @@ import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Browser, Page } from 'playwright';
 import { findChromium } from './helpers/chromium.ts';
 
@@ -118,6 +120,77 @@ async function run(page: Page, command: string, options: Record<string, unknown>
     [command, JSON.stringify(options)] as const,
   );
 }
+
+describe('the bundle a Chrome extension can actually run', () => {
+  test('never builds a function from a string', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    // Manifest V3 forbids eval and new Function in extension code. The driver
+    // used to build page functions from strings for Playwright, and the panel
+    // refused to run at all: "Evaluating a string as JavaScript violates the
+    // following Content Security Policy directive".
+    assert.doesNotMatch(bundle, /\bnew Function\b/);
+    assert.doesNotMatch(bundle, /(?<![.\w])eval\s*\(/);
+  });
+
+  test('runs under a policy that forbids eval, as an extension does', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    assert.ok(browser);
+
+    // The real constraint, served the way a browser really receives it: a
+    // Content-Security-Policy header with no 'unsafe-eval', which is what
+    // Manifest V3 imposes on extension code.
+    //
+    // The bundle is served as a file and loaded by the document, and the run is
+    // started by the document's own script. Scripts added through the debugging
+    // protocol are not subject to the page's policy, so injecting them the
+    // usual way would prove nothing.
+    const fixture = await readFile(new URL(FIXTURE), 'utf8');
+    const html = fixture.replace(
+      '</body>',
+      '<script src="/agent.js"></script>' +
+        '<script>window.__run = EarthStudioAgent.runCommandInPage("fly to Rome. hold 2 seconds", {})' +
+        '.then(function (r) { return { ok: true, applied: r.report.applied }; })' +
+        '.catch(function (e) { return { ok: false, error: String((e && e.message) || e) }; });</script>' +
+        '</body>',
+    );
+
+    const server = createServer((request, response) => {
+      if ((request.url ?? '').startsWith('/agent.js')) {
+        response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+        response.end(bundle);
+        return;
+      }
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': "script-src 'self' 'unsafe-inline'",
+      });
+      response.end(html);
+    });
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
+    const { port } = server.address() as AddressInfo;
+
+    const page = await browser.newPage();
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message.split('\n')[0] ?? error.message));
+    try {
+      await page.goto(`http://127.0.0.1:${port}/`);
+
+      const outcome = (await page.evaluate(
+        () => (window as unknown as { __run?: Promise<{ ok: boolean; applied?: number; error?: string }> }).__run,
+      )) as { ok: boolean; applied?: number; error?: string } | undefined;
+
+      assert.ok(outcome, `the bundle did not load under the policy: ${pageErrors.join('; ')}`);
+      assert.equal(outcome.ok, true, `the run failed under the policy: ${outcome.error}`);
+      assert.equal(outcome.applied, 3);
+      assert.deepEqual(pageErrors, [], 'nothing should have been refused by the policy');
+    } finally {
+      await page.close();
+      await new Promise<void>((closed) => server.close(() => closed()));
+    }
+  });
+});
 
 describe('running inside the page, as the extension does', () => {
   test('writes the PRD example with no browser automation at all', async (t) => {

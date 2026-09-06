@@ -7,8 +7,13 @@
  */
 export interface PageLike {
   goto(url: string, options?: { waitUntil?: string; timeout?: number }): Promise<unknown>;
-  /** Present on a real Playwright page; used by `inspect` and `probe`. */
-  evaluate?<R>(pageFunction: () => R): Promise<R>;
+  /**
+   * Present on a real Playwright page; used by the driver, `inspect` and
+   * `probe`. The argument matters: Playwright serialises the function, so it
+   * cannot close over anything, and building one from a string instead is
+   * forbidden by a Chrome extension's content security policy.
+   */
+  evaluate?<R, A = undefined>(pageFunction: (arg: A) => R, arg?: A): Promise<R>;
   click?(selector: string, options?: { timeout?: number; clickCount?: number; force?: boolean }): Promise<void>;
   hover?(selector: string, options?: { timeout?: number }): Promise<void>;
   keyboard?: { press(key: string): Promise<void>; type(text: string): Promise<void> };

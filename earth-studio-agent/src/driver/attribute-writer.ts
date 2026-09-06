@@ -59,37 +59,38 @@ interface RowState {
 
 const rowSelector = (type: string): string => `[data-attribute-type="${type}"]`;
 
-/** CSS strings reach the page inside a built function, so quotes must be safe. */
-function quote(value: string): string {
-  return JSON.stringify(value);
-}
-
 async function readRow(page: PageLike, target: AttributeTarget): Promise<RowState> {
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be read.');
   }
   const row = rowSelector(target.attributeType);
   const widget = `${row} ${target.widget}`;
-  return page.evaluate<RowState>(
-    new Function(`
-      const widget = document.querySelector(${quote(widget)});
-      const row = document.querySelector(${quote(row)});
-      const button = row === null ? null : row.querySelector('[data-action="click:addKeyframe"]');
-      if (widget === null) {
-        return { found: false, displayed: '', unitTitle: '', editBox: null, hasKeyframe: false, hasKeyframeButton: button !== null };
+  return page.evaluate<RowState, { row: string; widget: string }>(
+    ({ row: rowSelectorText, widget: widgetSelectorText }) => {
+      const widgetNode = document.querySelector(widgetSelectorText);
+      const rowNode = document.querySelector(rowSelectorText);
+      const button = rowNode === null ? null : rowNode.querySelector('[data-action="click:addKeyframe"]');
+      if (widgetNode === null) {
+        return {
+          found: false,
+          displayed: '',
+          unitTitle: '',
+          editBox: null,
+          hasKeyframe: false,
+          hasKeyframeButton: button !== null,
+        };
       }
-      const box = widget.querySelector('[contenteditable="true"], [contenteditable=""]');
+      const box = widgetNode.querySelector('[contenteditable="true"], [contenteditable=""]');
       return {
         found: true,
-        displayed: (widget.querySelector('.presentedValue') || {}).textContent || '',
-        unitTitle: (widget.querySelector('.unit') || {}).getAttribute
-          ? widget.querySelector('.unit').getAttribute('title') || ''
-          : '',
-        editBox: box === null ? null : (box.textContent || ''),
+        displayed: widgetNode.querySelector('.presentedValue')?.textContent ?? '',
+        unitTitle: widgetNode.querySelector('.unit')?.getAttribute('title') ?? '',
+        editBox: box === null ? null : (box.textContent ?? ''),
         hasKeyframe: button !== null && button.classList.contains('has-keyframe'),
         hasKeyframeButton: button !== null,
       };
-    `) as () => RowState,
+    },
+    { row, widget },
   );
 }
 
@@ -279,14 +280,12 @@ async function ensureKeyframe(
     ['forced click', async () => page.click!(button, { timeout: timeoutMs, force: true })],
     ['click from inside the page', async () => {
       if (typeof page.evaluate !== 'function') throw new Error('the page cannot run script');
-      const clicked = await page.evaluate<boolean>(
-        new Function(`
-          const node = document.querySelector(${quote(button)});
-          if (node === null) return false;
-          node.click();
-          return true;
-        `) as () => boolean,
-      );
+      const clicked = await page.evaluate<boolean, string>((selector) => {
+        const node = document.querySelector<HTMLElement>(selector);
+        if (node === null) return false;
+        node.click();
+        return true;
+      }, button);
       if (!clicked) throw new Error('the button is not in the page');
     }],
   ];
