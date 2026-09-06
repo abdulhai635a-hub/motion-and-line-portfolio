@@ -79,16 +79,51 @@ describe('writeAttribute', () => {
     const why = skip();
     if (why !== false) return t.skip(why);
     const page = await open();
-    // The field displays kilometres but its edit box holds metres, so a planned
-    // 1500 m is typed as 1500 and shows as 1.5 km. Trusting the label alone
-    // would have typed 1.5, putting the camera a metre and a half up.
+    // The field reads kilometres but its edit box holds metres, so a planned
+    // 1500 m is typed as 1500. Trusting the label alone would have typed 1.5,
+    // putting the camera a metre and a half above the ground.
     const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 1500);
 
     assert.equal(result.displayUnit, 'Kilometers');
     assert.equal(result.metresPerEditUnit, 1);
     assert.equal(result.typed, 1500);
-    assert.equal(await shown(page, 'altitude'), '1.5');
     assert.ok(Math.abs(result.readback - 1500) < 2, `read back ${result.readback}`);
+    await page.close();
+  });
+
+  test('accepts a write that makes the field switch units', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // The live failure at the last keyframe: the field read kilometres, 1500 m
+    // was written correctly, and Earth Studio then relabelled it "1500 m".
+    // Converting that with the old label made a correct write look like a
+    // thousandfold overshoot.
+    const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 1500);
+
+    assert.equal(result.typed, 1500);
+    assert.ok(Math.abs(result.readback - 1500) < 2, `read back ${result.readback}`);
+    assert.equal(await shown(page, 'altitude'), '1500');
+    assert.equal(
+      await page.locator('[data-attribute-type="altitude"] .scrub-input.valueInput .unit').getAttribute('title'),
+      'Meters',
+    );
+    await page.close();
+  });
+
+  test('writes a small altitude and then a large one, across the unit switch', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await writeAttribute(page as unknown as PageLike, ALTITUDE, 1500);
+    assert.equal(await shown(page, 'altitude'), '1500');
+
+    // Back up to 800 km: the field is reading metres now, and must end up in
+    // kilometres again.
+    const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 800_000);
+    assert.equal(result.typed, 800_000);
+    assert.ok(Math.abs(result.readback - 800_000) < 10, `read back ${result.readback}`);
+    assert.equal(await shown(page, 'altitude'), '800');
     await page.close();
   });
 
@@ -233,7 +268,8 @@ describe('writeAttribute', () => {
 
     assert.equal(await shown(page, 'latitude'), '35.361');
     assert.equal(await shown(page, 'longitude'), '138.727');
-    assert.equal(await shown(page, 'altitude'), '1.5');
+    // 1500 m is below the size at which the field switches to kilometres.
+    assert.equal(await shown(page, 'altitude'), '1500');
     await page.close();
   });
 

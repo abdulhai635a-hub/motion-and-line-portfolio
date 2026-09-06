@@ -116,9 +116,16 @@
   //
   // The full-precision text matters: it is how the driver works out whether the
   // edit box uses the same unit as the rounded display.
-  // One edit-box unit expressed in display units. Altitude is typed in metres
-  // and shown in kilometres; everything else shares its display unit.
-  var displayPerEdit = function (type) { return type === 'altitude' ? 0.001 : 1; };
+  // Altitude is always typed in metres but shown in whichever unit suits its
+  // size, and the unit element is relabelled with it. The live editor showed
+  // 1500 m as "1500 m" and 63170000 m as "63170 km"; the exact threshold is not
+  // published, and the driver does not depend on it - it reads the label every
+  // time - so ten kilometres is used here to exercise both sides.
+  var altitudeDisplay = function (metres) {
+    return Math.abs(metres) >= 10000
+      ? { value: metres / 1000, unit: 'km', title: 'Kilometers' }
+      : { value: metres, unit: 'm', title: 'Meters' };
+  };
 
   // The exact value behind each rounded display. The edit box always opens on
   // the current value at full precision, which is how the driver works out
@@ -167,9 +174,18 @@
         // value. The delay here is what makes that failure reproducible.
         if (commit && Number.isFinite(typed)) {
           EXACT[type] = typed;
-          var factor = displayPerEdit(type);
           setTimeout(function () {
-            presented.textContent = String(Math.round(typed * factor * 1000) / 1000);
+            if (type === 'altitude') {
+              var shown = altitudeDisplay(typed);
+              presented.textContent = String(Math.round(shown.value * 1000) / 1000);
+              if (unit) {
+                unit.textContent = shown.unit;
+                unit.setAttribute('title', shown.title);
+                restingTitle = shown.title;
+              }
+              return;
+            }
+            presented.textContent = String(Math.round(typed * 1000) / 1000);
           }, window.__commitDelay || 150);
         }
       };

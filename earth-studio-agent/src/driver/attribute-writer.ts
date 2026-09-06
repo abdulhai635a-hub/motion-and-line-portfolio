@@ -158,31 +158,39 @@ export async function writeAttribute(
   await page.keyboard.type(formatForField(typed));
   await page.keyboard.press('Enter');
 
-  const tolerance = readbackTolerance(planned, target.plannedUnit === 'metres' ? perDisplay : 1);
-  const toPlanned = (displayedText: string): number => {
-    const value = parseDisplayedNumber(displayedText);
-    return target.plannedUnit === 'metres' ? value * perDisplay : value;
+  // The read-back must use the unit as it reads AFTER the commit, not before:
+  // Earth Studio switches the altitude between kilometres and metres by
+  // magnitude, so writing 1500 m into a field that read kilometres leaves it
+  // reading "1500 m". Converting that with the old label made a correct write
+  // look like a thousandfold overshoot.
+  const toPlanned = (row: RowState): number => {
+    const value = parseDisplayedNumber(row.displayed);
+    return target.plannedUnit === 'metres' ? value * metresPerDisplayUnit(row.unitTitle) : value;
   };
+  const toleranceFor = (row: RowState): number =>
+    readbackTolerance(planned, target.plannedUnit === 'metres' ? metresPerDisplayUnit(row.unitTitle) : 1);
 
   // Poll rather than read once: the readout catches up a moment after Enter.
   const deadline = Date.now() + settleTimeoutMs;
   let after = await readRow(page, target);
-  let readback = toPlanned(after.displayed);
+  let readback = toPlanned(after);
+  let tolerance = toleranceFor(after);
   while (
     Date.now() < deadline &&
     (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance || after.editBox !== null)
   ) {
     await new Promise((done) => setTimeout(done, 100));
     after = await readRow(page, target);
-    readback = toPlanned(after.displayed);
+    readback = toPlanned(after);
+    tolerance = toleranceFor(after);
   }
 
   if (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance) {
     throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field did not take ${planned}.`, {
       detail:
         `Typed ${formatForField(typed)} into a field reading in ${before.unitTitle || 'unknown units'} ` +
-        `(one edit-box unit = ${perEdit} m); ` +
-        `after ${settleTimeoutMs}ms it still shows "${after.displayed}", which is ${readback} ` +
+        `(one edit-box unit = ${perEdit} m); after ${settleTimeoutMs}ms it shows ` +
+        `"${after.displayed}" ${after.unitTitle || 'in unknown units'}, which is ${readback} ` +
         `against the ${planned} that was wanted.`,
       hint: `Selector used: ${widget}`,
     });

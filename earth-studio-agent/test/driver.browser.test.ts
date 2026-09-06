@@ -112,9 +112,11 @@ describe('driver against a real browser', () => {
     assert.equal(altitude?.metresPerEditUnit, 1);
     assert.equal(altitude?.displayUnit, 'Kilometers');
 
+    // 1500 m is below the size at which the field switches to kilometres, so
+    // the value on screen is in metres.
     const added = await recorded(page);
     const last = added.filter((entry) => entry.type === 'altitude').at(-1);
-    assert.equal(last?.value, '1.5');
+    assert.equal(last?.value, '1500');
     await page.close();
   });
 
