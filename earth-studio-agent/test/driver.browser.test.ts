@@ -33,7 +33,9 @@ before(async () => {
     const { chromium } = await import('playwright');
     browser = await chromium.launch({ executablePath: findChromium() });
   } catch (error) {
-    launchError = error instanceof Error ? error.message : String(error);
+    // Playwright's install banner is several lines long; the first line says what happened.
+    const message = error instanceof Error ? error.message : String(error);
+    launchError = message.split('\n')[0];
   }
 });
 
