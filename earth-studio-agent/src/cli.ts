@@ -40,6 +40,7 @@ const USAGE = `earth-studio-agent - turn a text instruction into Earth Studio ca
 Usage
   earth-studio-agent plan  "<command>"   [options]   write the keyframe plan and log
   earth-studio-agent drive "<command>"   [options]   plan, then type it into Earth Studio
+  earth-studio-agent login               [options]   sign in to Google once and remember the session
   earth-studio-agent verify-layout       [options]   check the UI selectors against the live app
   earth-studio-agent places                          list the built-in place names
 
@@ -80,7 +81,7 @@ Browser (drive / verify-layout)
   -h, --help               show this help
 `;
 
-const KNOWN_COMMANDS = new Set(['plan', 'drive', 'verify-layout', 'places', 'help']);
+const KNOWN_COMMANDS = new Set(['plan', 'drive', 'login', 'verify-layout', 'places', 'help']);
 
 interface Cli {
   command: string;
@@ -108,6 +109,8 @@ export async function main(argv: string[]): Promise<number> {
         return await runPlan(cli);
       case 'drive':
         return await runDrive(cli);
+      case 'login':
+        return await runLogin(cli);
       case 'verify-layout':
         return await runVerifyLayout(cli);
       case 'places':
@@ -398,6 +401,51 @@ async function openDriver(cli: Cli) {
   const url = typeof cli.values.url === 'string' ? cli.values.url : EARTH_STUDIO_URL;
   await driver.open(url);
   return { session, driver };
+}
+
+/**
+ * Opens Earth Studio in a persistent Chromium profile and waits, so the Google
+ * sign-in happens once and every later `verify-layout` and `drive` reuses it.
+ */
+async function runLogin(cli: Cli): Promise<number> {
+  const profile = cli.values['user-data-dir'];
+  if (typeof profile !== 'string' || profile === '') {
+    throw new AgentError('INVALID_CONFIG', 'login needs --user-data-dir, or there is nowhere to remember the session.', {
+      hint: 'Try: earth-studio-agent login --user-data-dir ./.es-profile',
+    });
+  }
+
+  const session = await launchChromium({
+    headless: false,
+    userDataDir: resolve(profile),
+    executablePath: typeof cli.values['executable-path'] === 'string' ? cli.values['executable-path'] : undefined,
+  });
+  const url = typeof cli.values.url === 'string' ? cli.values.url : EARTH_STUDIO_URL;
+  try {
+    await session.page.goto(url, { waitUntil: 'load', timeout: 60_000 });
+    process.stdout.write(
+      `A Chromium window is open at ${url}.\n\n` +
+        '  1. Sign in to your Google account.\n' +
+        '  2. Open or create the Earth Studio project you want the keyframes in.\n' +
+        '  3. Come back here.\n\n',
+    );
+    if (process.stdin.isTTY) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        await rl.question('Press Enter once you are signed in and the project is open... ');
+      } finally {
+        rl.close();
+      }
+    } else {
+      process.stderr.write('stdin is not a terminal, so there is nothing to wait for; closing in 60 seconds.\n');
+      await new Promise((done) => setTimeout(done, 60_000));
+    }
+    process.stdout.write(`\nSession saved to ${resolve(profile)}.\n`);
+    process.stdout.write(`Next: earth-studio-agent verify-layout --user-data-dir ${profile}\n`);
+    return 0;
+  } finally {
+    await session.close();
+  }
 }
 
 async function runVerifyLayout(cli: Cli): Promise<number> {

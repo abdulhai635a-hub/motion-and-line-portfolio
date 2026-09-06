@@ -59,9 +59,14 @@ export async function launchChromium(options: LaunchOptions = {}): Promise<Brows
     const page = await browser.newPage();
     return { page: page as unknown as PageLike, close: () => browser.close() };
   } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    // A headless server has no display, which is a different fix from a missing browser.
+    const hint = /XServer|DISPLAY|headed browser/i.test(message)
+      ? 'This machine has no display. Add --headless, or run under "xvfb-run".'
+      : 'Run "npx playwright install chromium", or point --executable-path at a Chromium binary.';
     throw new AgentError('DRIVER_LAUNCH_FAILED', 'Chromium could not be started.', {
-      detail: cause instanceof Error ? cause.message : String(cause),
-      hint: 'Run "npx playwright install chromium", or point --executable-path at a Chromium binary.',
+      detail: message.split('\n')[0],
+      hint,
       cause,
     });
   }

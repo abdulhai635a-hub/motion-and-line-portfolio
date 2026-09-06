@@ -169,6 +169,20 @@ describe('cli', () => {
     assert.match(result.stderr, /Did you mean the "verify-layout" command\?/);
   });
 
+  test('login refuses to run without somewhere to save the session', async () => {
+    const result = await cli('login');
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /INVALID_CONFIG/);
+    assert.match(result.stderr, /--user-data-dir/);
+  });
+
+  test('--help lists every command the dispatcher accepts', async () => {
+    const { stdout } = await cli('--help');
+    for (const command of ['plan', 'drive', 'login', 'verify-layout', 'places']) {
+      assert.match(stdout, new RegExp(`earth-studio-agent ${command}`), command);
+    }
+  });
+
   test('places lists the built-in table', async () => {
     const result = await cli('places');
     assert.equal(result.code, 0);

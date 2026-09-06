@@ -56,20 +56,24 @@ with no dependencies and no network.
 ```bash
 cd earth-studio-agent
 
-# 1. Plan. Writes earth-studio-path.json and earth-studio-path.log.txt.
+# 1. Plan. No browser needed. Writes earth-studio-path.json and .log.txt.
 node src/cli.ts plan "zoom into Japan, hold 3 seconds, then fly to Mount Fuji and zoom in close"
 
-# 2. Check the selectors against the live app once (see the warning below).
+# 2. Sign in to Google once. The profile is remembered for later runs.
+node src/cli.ts login --user-data-dir ./.es-profile
+
+# 3. Check the selectors against the live app (see the warning below).
 node src/cli.ts verify-layout --user-data-dir ./.es-profile
 
-# 3. Type the plan into Earth Studio.
+# 4. Type the plan into Earth Studio.
 node src/cli.ts drive "zoom into Japan, hold 3 seconds, then fly to Mount Fuji and zoom in close" \
   --user-data-dir ./.es-profile
 ```
 
-`--user-data-dir` keeps a Chromium profile on disk, so you sign in to Google once
-and later runs reuse the session. Run with a visible window the first time;
-`--headless` is available afterwards.
+`login` opens Chromium at Earth Studio and waits while you sign in and open the
+project you want the keyframes in; `--user-data-dir` is where that session is
+kept, so `verify-layout` and `drive` reuse it. Steps 2-4 need a display;
+`--headless` works once you are signed in.
 
 Then, in Earth Studio: review the keyframes on the timeline, nudge anything you
 want, and render from Earth Studio itself.
@@ -207,7 +211,7 @@ Studio rejects it, that is the expected failure mode, not a bug.
 ## Development
 
 ```bash
-npm test          # 154 tests, ~8s
+npm test          # 156 tests, ~9s
 npm run typecheck # tsc --noEmit, strict
 ```
 
