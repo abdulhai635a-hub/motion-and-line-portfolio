@@ -43,13 +43,24 @@ export interface Inspection {
 export interface DeepInspection {
   ids: string[];
   customElements: string[];
+  /** Window size: a small window makes Earth Studio hide whole panels. */
+  viewport: { width: number; height: number };
+  /** Class names that look like they belong to an attribute or value widget. */
+  classHints: string[];
   /** Elements carrying a numeric-looking value, however they are built. */
   numericLike: Array<{ tag: string; selector: string; label: string; text: string; attributes: Record<string, string> }>;
   /** Raw HTML of a few attribute rows, truncated. */
   samples: Array<{ around: string; html: string }>;
+  /** Raw HTML requested with --html, when that was used. */
+  requested?: Array<{ selector: string; matched: number; html: string[] }>;
 }
 
-export async function inspectPage(page: PageLike, limit = 60, deep = false): Promise<Inspection> {
+export async function inspectPage(
+  page: PageLike,
+  limit = 60,
+  deep = false,
+  htmlSelectors: string[] = [],
+): Promise<Inspection> {
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be inspected.', {
       detail: 'The page object has no evaluate() method.',
@@ -172,16 +183,28 @@ export async function inspectPage(page: PageLike, limit = 60, deep = false): Pro
   });
 
   const inspection: Inspection = { ...raw, fields: raw.fields.slice(0, limit) };
-  if (deep) inspection.deep = await deepInspect(page);
+  if (deep || htmlSelectors.length > 0) inspection.deep = await deepInspect(page, htmlSelectors);
   return inspection;
 }
 
 /** The wider sweep, run only for `--deep`. */
-async function deepInspect(page: PageLike): Promise<DeepInspection> {
+async function deepInspect(page: PageLike, htmlSelectors: string[] = []): Promise<DeepInspection> {
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be inspected.');
   }
-  return page.evaluate<DeepInspection>(() => {
+  // The selectors travel into the page through the global, because evaluate()
+  // here takes no argument.
+  const wanted = JSON.stringify(htmlSelectors);
+  const result = await page.evaluate<DeepInspection>(new Function(`
+    const REQUESTED = ${wanted};
+    return (${deepInspectBody.toString()})(REQUESTED);
+  `) as () => DeepInspection);
+  return result;
+}
+
+/** Runs inside the page. Kept as a named function so it can be stringified. */
+function deepInspectBody(requested: string[]): DeepInspection {
+  return ((): DeepInspection => {
     const attributesOf = (element: Element): Record<string, string> => {
       const result: Record<string, string> = {};
       for (const attribute of Array.from(element.attributes)) {
@@ -237,8 +260,40 @@ async function deepInspect(page: PageLike): Promise<DeepInspection> {
       if (samples.length >= 2) break;
     }
 
-    return { ids, customElements, numericLike, samples };
-  });
+    // Class names that look like an attribute or value widget, which is where
+    // the numeric fields live when they are not plain inputs.
+    const classHints = Array.from(
+      new Set(
+        Array.from(document.querySelectorAll('[class]'))
+          .flatMap((element) => element.className.toString().split(/\s+/))
+          .filter((name) => /attribut|value|field|input|numer|scrub|param|coord|camera|position|altitude|latitude/i.test(name)),
+      ),
+    ).sort();
+
+    const requestedHtml = requested.map((selector) => {
+      let matches: Element[] = [];
+      try {
+        matches = Array.from(document.querySelectorAll(selector));
+      } catch {
+        // An invalid selector reports zero matches rather than throwing.
+      }
+      return {
+        selector,
+        matched: matches.length,
+        html: matches.slice(0, 3).map((element) => element.outerHTML.slice(0, 3000)),
+      };
+    });
+
+    return {
+      ids,
+      customElements,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      classHints,
+      numericLike,
+      samples,
+      requested: requestedHtml.length === 0 ? undefined : requestedHtml,
+    };
+  })();
 }
 
 export function renderInspection(inspection: Inspection): string {
@@ -272,6 +327,14 @@ export function renderInspection(inspection: Inspection): string {
   const deep = inspection.deep;
   if (deep !== undefined) {
     lines.push('-'.repeat(72));
+    lines.push(`Window ${deep.viewport.width} x ${deep.viewport.height}`);
+    if (deep.viewport.width < 1100 || deep.viewport.height < 700) {
+      lines.push('  ! Earth Studio hides panels in a small window. Maximise it and inspect again.');
+    }
+    lines.push('');
+    lines.push(`Class names worth targeting (${deep.classHints.length})`);
+    lines.push(`  ${deep.classHints.length === 0 ? '(none)' : deep.classHints.join(', ')}`);
+    lines.push('');
     lines.push(`Element ids (${deep.ids.length})`);
     lines.push(`  ${deep.ids.join(', ')}`);
     lines.push('');
@@ -288,6 +351,12 @@ export function renderInspection(inspection: Inspection): string {
     for (const sample of deep.samples) {
       lines.push(`Raw HTML of the row around ${sample.around}`);
       lines.push(sample.html);
+      lines.push('');
+    }
+    for (const request of deep.requested ?? []) {
+      lines.push(`Raw HTML for --html ${request.selector}  (${request.matched} match(es))`);
+      if (request.html.length === 0) lines.push('  (nothing matched)');
+      for (const html of request.html) lines.push(html);
       lines.push('');
     }
   }

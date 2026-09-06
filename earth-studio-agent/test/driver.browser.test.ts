@@ -283,6 +283,33 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
+  test('--html dumps the raw HTML of whatever is asked for', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    assert.ok(browser);
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 900, height: 600 });
+    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/checkbox-layout.html')).href);
+
+    const { inspectPage, renderInspection } = await import('../src/driver/inspect.ts');
+    const inspection = await inspectPage(page as unknown as PageLike, 60, true, ['.scrubber', 'nope-not-here']);
+    const deep = inspection.deep;
+    assert.ok(deep);
+
+    const scrubber = deep.requested?.find((entry) => entry.selector === '.scrubber');
+    assert.equal(scrubber?.matched, 2);
+    assert.ok(scrubber?.html[0]?.includes('data-attr="rotationZ"'));
+
+    // A selector that matches nothing is reported as such, not as an error.
+    assert.equal(deep.requested?.find((entry) => entry.selector === 'nope-not-here')?.matched, 0);
+
+    // A small window is the reason Earth Studio hides panels, so it is called out.
+    assert.equal(deep.viewport.width, 900);
+    assert.match(renderInspection(inspection), /Maximise it and inspect again/);
+    assert.ok(deep.classHints.includes('scrubber'), 'value-widget class names should be surfaced');
+    await page.close();
+  });
+
   test('inspect says why a page with no fields has none', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);

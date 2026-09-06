@@ -86,6 +86,8 @@ Browser (drive / verify-layout)
   --dry-run                plan and check the layout, but write nothing
   --deep                   inspect only: also report every id, every custom
                            element, and the raw HTML of the attribute rows
+  --html <css>             inspect only: dump the raw HTML of whatever matches
+                           this selector (repeatable)
 
   -h, --help               show this help
 `;
@@ -95,7 +97,7 @@ const KNOWN_COMMANDS = new Set(['plan', 'drive', 'login', 'verify-layout', 'insp
 interface Cli {
   command: string;
   positional: string[];
-  values: Record<string, string | boolean | undefined>;
+  values: Record<string, string | boolean | string[] | undefined>;
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -174,6 +176,7 @@ function readArgs(argv: string[]): Cli {
       'continue-on-error': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
       deep: { type: 'boolean' },
+      html: { type: 'string', multiple: true },
     },
   });
   // The first positional is a subcommand only when it is exactly one of the
@@ -496,7 +499,8 @@ async function runVerifyLayout(cli: Cli): Promise<number> {
 async function runInspect(cli: Cli): Promise<number> {
   const { session } = await openDriver(cli);
   try {
-    const inspection = await inspectPage(session.page, 60, cli.values.deep === true);
+    const requested = Array.isArray(cli.values.html) ? (cli.values.html as string[]) : [];
+    const inspection = await inspectPage(session.page, 60, cli.values.deep === true, requested);
     const text = renderInspection(inspection);
     process.stdout.write(`${text}\n`);
     const prefix = typeof cli.values.out === 'string' ? cli.values.out : 'earth-studio-fields';
