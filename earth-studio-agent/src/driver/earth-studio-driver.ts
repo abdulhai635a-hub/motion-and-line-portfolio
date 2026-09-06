@@ -83,9 +83,15 @@ export class EarthStudioDriver {
     this.onProgress = options.onProgress;
   }
 
-  /** Navigates to Earth Studio and waits for the editor to appear. */
-  async open(url: string = EARTH_STUDIO_URL): Promise<void> {
-    await this.page.goto(url, { waitUntil: 'load', timeout: this.timeoutMs });
+  /**
+   * Waits for the editor to appear, navigating there first unless the page is
+   * already showing the project (which is the case when attaching to a browser
+   * the user opened themselves).
+   */
+  async open(url: string = EARTH_STUDIO_URL, options: { navigate?: boolean } = {}): Promise<void> {
+    if (options.navigate !== false) {
+      await this.page.goto(url, { waitUntil: 'load', timeout: this.timeoutMs });
+    }
     const ready = await this.findSelector('appReady', this.selectors.appReady);
     if (ready === null) {
       throw new AgentError('DRIVER_NOT_READY', 'The Earth Studio editor did not load.', {

@@ -71,8 +71,12 @@ Output
   --quiet                  only print the summary
 
 Browser (drive / verify-layout)
+  --cdp <url>              attach to a Chrome you started yourself, e.g.
+                           http://localhost:9222 - use this when Google refuses
+                           to sign in to an automated browser (see the README)
   --user-data-dir <path>   Chromium profile, so the Google sign-in is remembered
   --headless               run without a visible window (sign-in usually needs a window)
+  --channel <name>         use an installed browser, e.g. "chrome"
   --executable-path <path> use a specific Chromium binary
   --url <url>              default ${EARTH_STUDIO_URL}
   --selectors <path>       JSON file overriding src/driver/selectors.ts
@@ -157,6 +161,8 @@ function readArgs(argv: string[]): Cli {
       'user-data-dir': { type: 'string' },
       headless: { type: 'boolean' },
       'executable-path': { type: 'string' },
+      cdp: { type: 'string' },
+      channel: { type: 'string' },
       url: { type: 'string' },
       selectors: { type: 'string' },
       'continue-on-error': { type: 'boolean' },
@@ -393,14 +399,18 @@ async function openDriver(cli: Cli) {
   // Read the selector override first: it is cheap, and a broken file should be
   // reported before a browser window is opened.
   const selectors = await loadSelectors(cli);
+  const cdpEndpoint = typeof cli.values.cdp === 'string' ? cli.values.cdp : undefined;
   const session = await launchChromium({
     headless: cli.values.headless === true,
     userDataDir: typeof cli.values['user-data-dir'] === 'string' ? resolve(cli.values['user-data-dir']) : undefined,
     executablePath: typeof cli.values['executable-path'] === 'string' ? cli.values['executable-path'] : undefined,
+    channel: typeof cli.values.channel === 'string' ? cli.values.channel : undefined,
+    cdpEndpoint,
   });
   const driver = new EarthStudioDriver(session.page, { selectors });
   const url = typeof cli.values.url === 'string' ? cli.values.url : EARTH_STUDIO_URL;
-  await driver.open(url);
+  // An attached browser already has the project open; navigating would lose it.
+  await driver.open(url, { navigate: cdpEndpoint === undefined });
   return { session, driver };
 }
 
@@ -409,6 +419,13 @@ async function openDriver(cli: Cli) {
  * sign-in happens once and every later `verify-layout` and `drive` reuses it.
  */
 async function runLogin(cli: Cli): Promise<number> {
+  if (typeof cli.values.cdp === 'string') {
+    process.stdout.write(
+      'With --cdp you sign in yourself, in your own Chrome, so there is nothing for login to do.\n' +
+        'Sign in there, open your Earth Studio project, then run verify-layout with the same --cdp.\n',
+    );
+    return 0;
+  }
   const profile = cli.values['user-data-dir'];
   if (typeof profile !== 'string' || profile === '') {
     throw new AgentError('INVALID_CONFIG', 'login needs --user-data-dir, or there is nowhere to remember the session.', {
@@ -429,6 +446,10 @@ async function runLogin(cli: Cli): Promise<number> {
         '  1. Sign in to your Google account.\n' +
         '  2. Open or create the Earth Studio project you want the keyframes in.\n' +
         '  3. Come back here.\n\n',
+    );
+    process.stdout.write(
+      'If Google says "This browser or app may not be secure", it is refusing to sign in\n' +
+        'to an automated browser. Use the --cdp route instead; the README explains it.\n\n',
     );
     if (process.stdin.isTTY) {
       const rl = createInterface({ input: process.stdin, output: process.stdout });

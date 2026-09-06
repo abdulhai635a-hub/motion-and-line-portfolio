@@ -81,6 +81,46 @@ project you want the keyframes in; `--user-data-dir` is where that session is
 kept, so `verify-layout` and `drive` reuse it. Steps 2-4 need a display;
 `--headless` works once you are signed in.
 
+### If Google will not sign you in
+
+Google often refuses to sign in inside an automated browser:
+
+> **Couldn't sign you in** - This browser or app may not be secure.
+
+That is Google's anti-automation check, not a fault in the agent, and no launch
+flag reliably defeats it. The dependable route is the other way round: sign in
+yourself, in your own Chrome, and let the agent attach to that window.
+
+Start Chrome with a debugging port and a profile of its own:
+
+```powershell
+# Windows PowerShell
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+  --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\es-chrome-profile"
+```
+
+```bash
+# macOS
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 --user-data-dir="$HOME/es-chrome-profile"
+
+# Linux
+google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/es-chrome-profile"
+```
+
+In that window: sign in to Google, open your Earth Studio project. Then point the
+agent at it with `--cdp` instead of `--user-data-dir`, and skip `login` entirely:
+
+```bash
+node src/cli.ts verify-layout --cdp http://localhost:9222
+node src/cli.ts drive "zoom into Japan, hold 3 seconds, then fly to Mount Fuji" --cdp http://localhost:9222
+```
+
+The agent works in the tab already showing Earth Studio, so your open project is
+used rather than a fresh one, and disconnecting leaves your browser running.
+`--user-data-dir` must be a directory Chrome is not already using, which is why
+the commands above name a new one.
+
 Then, in Earth Studio: review the keyframes on the timeline, nudge anything you
 want, and render from Earth Studio itself.
 
@@ -217,7 +257,7 @@ Studio rejects it, that is the expected failure mode, not a bug.
 ## Development
 
 ```bash
-npm test          # 157 tests, ~10s
+npm test          # 161 tests, ~13s
 npm run typecheck # tsc --noEmit, strict
 ```
 
@@ -232,6 +272,9 @@ CLI. Two parts are worth calling out:
   reporting. It **cannot** verify that the real Earth Studio DOM matches
   `DEFAULT_SELECTORS` — that is what `verify-layout` is for. The tests skip
   themselves when no browser is available.
+- **`test/driver.cdp.test.ts`** starts a browser with `--remote-debugging-port`
+  exactly as the instructions above tell you to, attaches to it, writes a whole
+  plan into it, and checks that disconnecting leaves it running.
 - **`test/geocode.http.test.ts`** runs the online geocoder over real HTTP against
   a local Nominatim-shaped server, so timeouts, status codes and headers are
   exercised without depending on (or hammering) the public service.

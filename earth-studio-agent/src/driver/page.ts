@@ -25,15 +25,35 @@ export interface LaunchOptions {
   userDataDir?: string;
   /** Overrides the bundled Chromium, e.g. a system install. */
   executablePath?: string;
+  /** Playwright browser channel, e.g. "chrome" for the installed Google Chrome. */
+  channel?: string;
+  /**
+   * Attach to a Chrome the user started themselves, instead of launching one:
+   * "http://localhost:9222". Google refuses sign-in in an automation-launched
+   * browser, so this is the reliable route - sign in normally in your own
+   * Chrome, then let the agent drive that window.
+   */
+  cdpEndpoint?: string;
   slowMoMs?: number;
 }
+
+/**
+ * Playwright announces itself through --enable-automation and a
+ * navigator.webdriver flag. Dropping them does not defeat Google's sign-in
+ * check, but it keeps the launched browser behaving like an ordinary one for
+ * everything after sign-in.
+ */
+const QUIET_AUTOMATION = {
+  ignoreDefaultArgs: ['--enable-automation'],
+  args: ['--disable-blink-features=AutomationControlled'],
+};
 
 /**
  * Launches Chromium through Playwright, which is an optional dependency: the
  * parse/geocode/timeline half of the agent runs without it.
  */
 export async function launchChromium(options: LaunchOptions = {}): Promise<BrowserSession> {
-  const { headless = false, userDataDir, executablePath, slowMoMs } = options;
+  const { headless = false, userDataDir, executablePath, channel, cdpEndpoint, slowMoMs } = options;
   let playwright: typeof import('playwright');
   try {
     playwright = await import('playwright');
@@ -46,10 +66,25 @@ export async function launchChromium(options: LaunchOptions = {}): Promise<Brows
     });
   }
 
-  const launchArgs = { headless, executablePath, slowMo: slowMoMs };
+  const launchArgs = { headless, executablePath, channel, slowMo: slowMoMs, ...QUIET_AUTOMATION };
   const { AgentError } = await import('../errors.ts');
 
   try {
+    if (cdpEndpoint !== undefined) {
+      const browser = await playwright.chromium.connectOverCDP(cdpEndpoint);
+      const context = browser.contexts()[0] ?? (await browser.newContext());
+      const pages = context.pages();
+      // Prefer the tab already showing Earth Studio, so an open project is used
+      // rather than a blank tab somewhere else in the window.
+      const page =
+        pages.find((candidate) => candidate.url().includes('earth.google.com')) ??
+        pages[0] ??
+        (await context.newPage());
+      await page.bringToFront();
+      // close() on a CDP connection disconnects; it does not shut the user's browser.
+      return { page: page as unknown as PageLike, close: () => browser.close() };
+    }
+
     if (userDataDir !== undefined) {
       const context = await playwright.chromium.launchPersistentContext(userDataDir, launchArgs);
       const page = context.pages()[0] ?? (await context.newPage());
@@ -60,11 +95,13 @@ export async function launchChromium(options: LaunchOptions = {}): Promise<Brows
     return { page: page as unknown as PageLike, close: () => browser.close() };
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    // A headless server has no display, which is a different fix from a missing browser.
-    const hint = /XServer|DISPLAY|headed browser/i.test(message)
-      ? 'This machine has no display. Add --headless, or run under "xvfb-run".'
-      : 'Run "npx playwright install chromium", or point --executable-path at a Chromium binary.';
-    throw new AgentError('DRIVER_LAUNCH_FAILED', 'Chromium could not be started.', {
+    // Each of these needs a different fix, so say which one it is.
+    const hint = cdpEndpoint !== undefined
+      ? `Nothing is listening at ${cdpEndpoint}. Start Chrome with --remote-debugging-port first (see the README).`
+      : /XServer|DISPLAY|headed browser/i.test(message)
+        ? 'This machine has no display. Add --headless, or run under "xvfb-run".'
+        : 'Run "npx playwright install chromium", or point --executable-path at a Chromium binary.';
+    throw new AgentError('DRIVER_LAUNCH_FAILED', cdpEndpoint === undefined ? 'Chromium could not be started.' : 'Could not attach to the running Chrome.', {
       detail: message.split('\n')[0],
       hint,
       cause,
