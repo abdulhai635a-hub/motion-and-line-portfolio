@@ -116,8 +116,11 @@ describe('interaction probe', () => {
 
     assert.equal(report.steps.length, 2);
     assert.equal(report.steps[0]?.editable.length, 0, 'nothing should be editable before the click');
-    assert.ok(report.steps[1]?.editable.length ?? 0 > 0, 'the click should reveal an editable element');
-    assert.match(report.steps[1]?.focused ?? '', /^input/);
+
+    // The live editor opens a contenteditable div, not an input, and focuses it.
+    assert.deepEqual(report.steps[1]?.editable, ['div.input']);
+    assert.equal(report.steps[1]?.focused, 'div.input');
+    assert.match(report.steps[1]?.html ?? '', /contenteditable="true"/);
     assert.match(renderInteraction(report), /after a single click/);
     await page.close();
   });
