@@ -178,7 +178,8 @@ describe('playhead probe', () => {
     assert.equal(at('after Home'), '0');
     assert.equal(at('after ArrowRight x5'), '5');
     assert.equal(at('after ArrowLeft x2'), '3');
-    assert.equal(at('after End'), '390');
+    // The fixture's timeline is 450 frames, as the live project's was.
+    assert.equal(at('after End'), '450');
     assert.equal(at('after Home again'), '0');
     await page.close();
   });
