@@ -7,8 +7,10 @@
  */
 export interface PageLike {
   goto(url: string, options?: { waitUntil?: string; timeout?: number }): Promise<unknown>;
-  /** Present on a real Playwright page; used only by the `inspect` command. */
+  /** Present on a real Playwright page; used by `inspect` and `probe`. */
   evaluate?<R>(pageFunction: () => R): Promise<R>;
+  click?(selector: string, options?: { timeout?: number; clickCount?: number }): Promise<void>;
+  keyboard?: { press(key: string): Promise<void>; type(text: string): Promise<void> };
   url?(): string;
   title?(): Promise<string>;
   waitForSelector(selector: string, options?: { timeout?: number; state?: string }): Promise<unknown>;

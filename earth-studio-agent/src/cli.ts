@@ -25,6 +25,7 @@ import { EarthStudioDriver, EARTH_STUDIO_URL } from './driver/earth-studio-drive
 import { launchChromium } from './driver/page.ts';
 import { mergeSelectors } from './driver/selectors.ts';
 import { inspectPage, renderInspection } from './driver/inspect.ts';
+import { probeAttribute, renderInteraction, renderSurvey, surveyAttributes } from './driver/probe.ts';
 import {
   Geocoder,
   createNominatimProvider,
@@ -45,6 +46,7 @@ Usage
   earth-studio-agent login               [options]   sign in to Google once and remember the session
   earth-studio-agent verify-layout       [options]   check the UI selectors against the live app
   earth-studio-agent inspect             [options]   dump the page's real fields, to fix the selectors
+  earth-studio-agent probe               [options]   list the camera attribute rows, and see how one is edited
   earth-studio-agent places                          list the built-in place names
 
 Input
@@ -88,11 +90,15 @@ Browser (drive / verify-layout)
                            element, and the raw HTML of the attribute rows
   --html <css>             inspect only: dump the raw HTML of whatever matches
                            this selector (repeatable)
+  --attribute <type>       probe only: click this attribute's value widget and
+                           report what the page does, e.g. --attribute latitude
+  --type-value <text>      probe only: also type this, then press Escape to
+                           cancel, so the editing gesture can be seen end to end
 
   -h, --help               show this help
 `;
 
-const KNOWN_COMMANDS = new Set(['plan', 'drive', 'login', 'verify-layout', 'inspect', 'places', 'help']);
+const KNOWN_COMMANDS = new Set(['plan', 'drive', 'login', 'verify-layout', 'inspect', 'probe', 'places', 'help']);
 
 interface Cli {
   command: string;
@@ -126,6 +132,8 @@ export async function main(argv: string[]): Promise<number> {
         return await runVerifyLayout(cli);
       case 'inspect':
         return await runInspect(cli);
+      case 'probe':
+        return await runProbe(cli);
       case 'places':
         process.stdout.write(`${knownNames().join('\n')}\n`);
         return 0;
@@ -177,6 +185,8 @@ function readArgs(argv: string[]): Cli {
       'dry-run': { type: 'boolean' },
       deep: { type: 'boolean' },
       html: { type: 'string', multiple: true },
+      attribute: { type: 'string' },
+      'type-value': { type: 'string' },
     },
   });
   // The first positional is a subcommand only when it is exactly one of the
@@ -525,6 +535,37 @@ async function runInspect(cli: Cli): Promise<number> {
     }
     process.stdout.write(`\nInspected: ${inspection.title} - ${inspection.url}\n`);
     return 0;
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Surveys the camera attribute rows, and optionally clicks one to see how the
+ * editor responds. This is what turns a guess about the DOM into a fact.
+ */
+async function runProbe(cli: Cli): Promise<number> {
+  const { session } = await openDriver(cli);
+  try {
+    const survey = await surveyAttributes(session.page);
+    const parts = [renderSurvey(survey)];
+
+    const attribute = typeof cli.values.attribute === 'string' ? cli.values.attribute : undefined;
+    if (attribute !== undefined) {
+      const typeValue = typeof cli.values['type-value'] === 'string' ? cli.values['type-value'] : undefined;
+      const interaction = await probeAttribute(session.page, attribute, typeValue);
+      parts.push('', renderInteraction(interaction));
+    }
+
+    const text = parts.join('\n');
+    process.stdout.write(`${text}\n`);
+
+    const prefix = typeof cli.values.out === 'string' ? cli.values.out : 'earth-studio-probe';
+    const base = resolve(prefix);
+    await mkdir(dirname(base), { recursive: true });
+    await writeFile(`${base}.txt`, `${text}\n`, 'utf8');
+    process.stdout.write(`\nWrote ${base}.txt\n`);
+    return survey.rows.length === 0 ? 1 : 0;
   } finally {
     await session.close();
   }

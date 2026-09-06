@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Untitled - Google Earth Studio</title></head>
+<body>
+<!--
+  Copied from the markup the live Earth Studio actually returned, so the probe
+  and the driver can be developed against the real shape:
+
+    li.attribute[data-attribute-type] > span.title
+                                      > span.actions > span.value
+                                          > span.scrub-input.valueInput
+                                              > span.presentedValueContainer > span.presentedValue
+                                              > span.unit[title]
+                                      > button[data-action="click:addKeyframe"]
+
+  Longitude carries two widgets (whole rotations plus degrees); altitude is
+  displayed in kilometres while the underlying attribute is metres.
+
+  Clicking a widget here reveals an input, which is one plausible editing
+  gesture; the probe's job is to report whatever actually happens, so the real
+  behaviour can be read off a real session rather than assumed.
+-->
+<div data-earth-studio-app>
+<ul class="attribute-list">
+  <li class="attribute visible" data-attribute-type="longitude">
+    <span class="title">Longitude</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input rotationInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">0</span></span><span class="unit rotations" title="Rotations">x</span></span>
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">-34.646</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Longitude" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
+  <li class="attribute visible" data-attribute-type="latitude">
+    <span class="title">Latitude</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">-15.018</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Latitude" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
+  <li class="attribute visible" data-attribute-type="altitude">
+    <span class="title">Altitude</span>
+    <span class="actions">
+      <span class="value">
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">52043</span></span><span class="unit meters" title="Kilometers">km</span></span>
+      </span>
+      <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Altitude" title-tooltip="Add keyframe"></button>
+    </span>
+  </li>
+</ul>
+</div>
+<script>
+(function () {
+  document.querySelectorAll('.scrub-input').forEach(function (widget) {
+    widget.addEventListener('click', function () {
+      if (widget.querySelector('input')) return;
+      var readout = widget.querySelector('.presentedValueContainer');
+      var input = document.createElement('input');
+      input.className = 'scrub-input-edit';
+      input.value = widget.querySelector('.presentedValue').textContent;
+      if (readout) readout.style.display = 'none';
+      widget.insertBefore(input, widget.firstChild);
+      input.focus();
+      input.select();
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') { input.remove(); if (readout) readout.style.display = ''; return; }
+        if (event.key !== 'Enter') return;
+        widget.querySelector('.presentedValue').textContent = input.value;
+        input.remove();
+        if (readout) readout.style.display = '';
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
