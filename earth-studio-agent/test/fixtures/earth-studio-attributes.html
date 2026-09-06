@@ -21,9 +21,13 @@
   behaviour can be read off a real session rather than assumed.
 -->
 <div data-earth-studio-app>
-<ul class="playback-controls">
+<div class="playback-controls"><ul>
+  <li class="control" data-action="click:jumpWorkspaceStart" tabindex="0"><span class="icon-start" title-tooltip="Jump to Workspace Start"></span></li>
+  <li class="control" data-action="click:backward" tabindex="0"><span class="icon-rewind" title-tooltip="Previous Frame"></span></li>
+  <li class="control" data-action="click:forward" tabindex="0"><span class="icon-forward" title-tooltip="Next Frame"></span></li>
+  <li class="control" data-action="click:jumpWorkspaceEnd" tabindex="0"><span class="icon-end" title-tooltip="Jump to Workspace End"></span></li>
   <li class="control timecode" data-action="click:toggleTimeFormat" data-value="model.timecode" tabindex="0" title-tooltip="Toggle Time Format">0</li>
-</ul>
+</ul></div>
 <ul class="attribute-list">
   <li class="attribute visible" data-attribute-type="longitude">
     <span class="title">Longitude</span>
@@ -127,15 +131,35 @@
   var draw = function () { readout.textContent = FORMATS[format](); };
   readout.addEventListener('click', function () { format = (format + 1) % FORMATS.length; draw(); });
   window.__frame = function () { return frame; };
+  // The transport buttons the live editor shows beside the readout.
+  var move = function (delta) { frame = Math.max(0, Math.min(450, frame + delta)); setTimeout(draw, 30); };
+  var bind = function (action, handler) {
+    var node = document.querySelector('[data-action="' + action + '"]');
+    if (node) node.addEventListener('click', handler);
+  };
+  bind('click:jumpWorkspaceStart', function () { frame = 0; setTimeout(draw, 30); });
+  bind('click:jumpWorkspaceEnd', function () { frame = 450; setTimeout(draw, 30); });
+  bind('click:forward', function () { move(1); });
+  bind('click:backward', function () { move(-1); });
+  // Keyboard handling can be switched off, to stand in for a session where the
+  // shortcuts never reach the application.
+  window.__keyboardEnabled = true;
+  // The key behaviour observed on the live editor: arrows step one frame,
+  // Shift+arrow steps five, Home and End jump to the ends. The readout updates
+  // asynchronously there, so it does here too.
+  var LAST_FRAME = 450;
   document.addEventListener('keydown', function (event) {
     if (document.querySelector('[contenteditable]')) return;
-    if (event.key === 'ArrowRight') frame += 1;
-    else if (event.key === 'ArrowLeft') frame = Math.max(0, frame - 1);
+    if (!window.__keyboardEnabled) return;
+    var step = event.shiftKey ? 5 : 1;
+    if (event.key === 'ArrowRight' || event.key === 'PageUp') frame += step;
+    else if (event.key === 'ArrowLeft' || event.key === 'PageDown') frame -= step;
     else if (event.key === 'Home') frame = 0;
-    else if (event.key === 'End') frame = 390;
+    else if (event.key === 'End') frame = LAST_FRAME;
     else return;
+    frame = Math.max(0, Math.min(LAST_FRAME, frame));
     event.preventDefault();
-    draw();
+    setTimeout(draw, 30);
   });
 
   // Every attribute row carries an "add keyframe" button.
