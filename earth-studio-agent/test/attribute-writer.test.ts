@@ -310,6 +310,26 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('commits even when focus does not stay on the edit box', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // A live run lost a keyframe exactly here: the value was typed with the
+    // global keyboard, focus was not on the box, and nothing was committed -
+    // the box stayed open and the field kept its old value.
+    await page.evaluate(() => {
+      (window as unknown as { __stealFocus: boolean }).__stealFocus = true;
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 1500);
+    assert.equal(result.typed, 1500);
+    assert.equal(await shown(page, 'altitude'), '1500');
+
+    // And the edit box must be closed afterwards, not left open over the value.
+    assert.equal(await page.locator('[data-attribute-type="altitude"] [contenteditable]').count(), 0);
+    await page.close();
+  });
+
   test('a missing attribute row names itself and points at probe', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

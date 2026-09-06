@@ -154,9 +154,37 @@ export async function writeAttribute(
 
   const typed = target.plannedUnit === 'metres' ? planned / perEdit : planned;
 
-  await page.keyboard.press('Control+a');
-  await page.keyboard.type(formatForField(typed));
-  await page.keyboard.press('Enter');
+  // Type into the edit box by addressing it, not by trusting where focus is.
+  // Ctrl+A followed by keystrokes goes wherever focus happens to be, and a live
+  // run lost a whole keyframe that way: the box stayed open, nothing was
+  // committed, and the field still read its old value.
+  const editSelector = `${widget} [contenteditable]`;
+  const text = formatForField(typed);
+  try {
+    await page.fill(editSelector, text, { timeout: timeoutMs });
+  } catch {
+    // Older shapes of the widget may not accept fill; fall back to the keyboard.
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type(text);
+  }
+  try {
+    await page.press(editSelector, 'Enter', { timeout: timeoutMs });
+  } catch {
+    await page.keyboard.press('Enter');
+  }
+
+  // The edit box must close, or nothing was committed. One more Enter, then
+  // give up cleanly rather than leaving the project mid-edit.
+  if (await stillEditing(page, target)) {
+    await page.keyboard.press('Enter');
+    if (await stillEditing(page, target)) {
+      await page.keyboard.press('Escape');
+      throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field would not commit ${planned}.`, {
+        detail: `Typed ${text}, but the edit box stayed open, so the value was never applied.`,
+        hint: `Selector used: ${editSelector}`,
+      });
+    }
+  }
 
   // The read-back must use the unit as it reads AFTER the commit, not before:
   // Earth Studio switches the altitude between kilometres and metres by
@@ -283,6 +311,16 @@ async function ensureKeyframe(
       detail: attempts.join('; '),
       hint: 'The value was set, but it is not a keyframe. Run "earth-studio-agent probe --buttons" to see the control.',
     });
+  }
+  return true;
+}
+
+/** True when the edit box is still open a moment after Enter. */
+async function stillEditing(page: PageLike, target: AttributeTarget): Promise<boolean> {
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    if ((await readRow(page, target)).editBox === null) return false;
+    await new Promise((done) => setTimeout(done, 100));
   }
   return true;
 }

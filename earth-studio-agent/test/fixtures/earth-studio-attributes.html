@@ -161,6 +161,9 @@
       widget.setAttribute('tabindex', '-1');
       box.focus();
       document.getSelection().selectAllChildren(box);
+      // Tests set this to stand in for a session where focus does not stay on
+      // the edit box, which is what left a live write uncommitted.
+      if (window.__stealFocus) setTimeout(function () { document.body.focus(); }, 10);
 
       var finish = function (commit) {
         var typed = Number(box.textContent);
