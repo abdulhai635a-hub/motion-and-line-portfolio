@@ -48,7 +48,15 @@ export interface DeepInspection {
   /** Class names that look like they belong to an attribute or value widget. */
   classHints: string[];
   /** Elements carrying a numeric-looking value, however they are built. */
-  numericLike: Array<{ tag: string; selector: string; label: string; text: string; attributes: Record<string, string> }>;
+  numericLike: Array<{
+    tag: string;
+    selector: string;
+    label: string;
+    text: string;
+    attributes: Record<string, string>;
+    /** Enclosing elements with their classes, which is what a selector hangs off. */
+    parents: string;
+  }>;
   /** Raw HTML of a few attribute rows, truncated. */
   samples: Array<{ around: string; html: string }>;
   /** Raw HTML requested with --html, when that was used. */
@@ -236,15 +244,24 @@ function deepInspectBody(requested: string[]): DeepInspection {
       if (!/^-?[\d,]+(\.\d+)?$/.test(text)) continue;
       const tag = element.tagName.toLowerCase();
       const id = element.id;
-      const selector = id !== '' ? `#${id}` : tag;
+      // A bare tag name is useless for writing a selector, so fall back to the
+      // element's own classes and then to its nearest classed ancestor.
+      const own = element.className.toString().trim().split(/\s+/).filter((name) => name !== '');
+      let selector = id !== '' ? `#${id}` : own.length > 0 ? `${tag}.${own.join('.')}` : tag;
       let label = '';
+      const chain: string[] = [];
       let ancestor: Element | null = element.parentElement;
-      for (let depth = 0; depth < 3 && ancestor !== null && label === ''; depth += 1) {
-        const text = ancestor.getAttribute('title') ?? ancestor.getAttribute('aria-label') ?? '';
-        if (text !== '') label = text.slice(0, 60);
+      for (let depth = 0; depth < 4 && ancestor !== null; depth += 1) {
+        const classes = ancestor.className.toString().trim().split(/\s+/).filter((name) => name !== '');
+        chain.push(`${ancestor.tagName.toLowerCase()}${classes.length > 0 ? `.${classes.join('.')}` : ''}`);
+        if (label === '') {
+          const text = ancestor.getAttribute('title') ?? ancestor.getAttribute('aria-label') ?? '';
+          if (text !== '') label = text.slice(0, 60);
+        }
+        if (selector === tag && classes.length > 0) selector = `${ancestor.tagName.toLowerCase()}.${classes[0]} ${tag}`;
         ancestor = ancestor.parentElement;
       }
-      numericLike.push({ tag, selector, label, text, attributes: attributesOf(element) });
+      numericLike.push({ tag, selector, label, text, attributes: attributesOf(element), parents: chain.join(' < ') });
       if (numericLike.length >= 40) break;
     }
 
@@ -344,8 +361,9 @@ export function renderInspection(inspection: Inspection): string {
     lines.push(`Elements holding a number (${deep.numericLike.length})`);
     for (const entry of deep.numericLike) {
       const attributes = Object.entries(entry.attributes).map(([name, value]) => `${name}="${value}"`).join(' ');
-      lines.push(`  ${entry.tag.padEnd(8)} ${entry.selector.padEnd(24)} ${JSON.stringify(entry.text).padEnd(14)} ${entry.label}`);
-      if (attributes !== '') lines.push(`           ${attributes}`);
+      lines.push(`  ${JSON.stringify(entry.text).padEnd(12)} ${entry.selector}${entry.label === '' ? '' : `   (${entry.label})`}`);
+      if (attributes !== '') lines.push(`               ${attributes}`);
+      if (entry.parents !== '') lines.push(`               in: ${entry.parents}`);
     }
     lines.push('');
     for (const sample of deep.samples) {

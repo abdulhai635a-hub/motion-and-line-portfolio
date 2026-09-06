@@ -310,6 +310,27 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
+  test('a numeric element is reported with a selector that can actually be written', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    assert.ok(browser);
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/scrub-layout.html')).href);
+
+    const { inspectPage } = await import('../src/driver/inspect.ts');
+    const deep = (await inspectPage(page as unknown as PageLike, 60, true)).deep;
+    assert.ok(deep);
+
+    const value = deep.numericLike.find((entry) => entry.text === '-34.646');
+    assert.ok(value, 'the scrubbed value should be found');
+    // A bare "span" would be useless; the report has to carry the classes.
+    assert.equal(value.selector, 'span.presentedValue');
+    assert.match(value.parents, /div\.scrub-input/);
+    assert.equal(value.label, 'Latitude');
+    assert.equal(await page.locator(value.selector).count(), 1);
+    await page.close();
+  });
+
   test('inspect says why a page with no fields has none', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
