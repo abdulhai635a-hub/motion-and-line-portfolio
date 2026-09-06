@@ -1,0 +1,68 @@
+/**
+ * The slice of Playwright's Page that the driver actually uses.
+ *
+ * Depending on this interface rather than on Playwright directly keeps the
+ * driver testable: the test suite drives a real Chromium page against a mock
+ * Earth Studio document, and Playwright's Page satisfies this shape as-is.
+ */
+export interface PageLike {
+  goto(url: string, options?: { waitUntil?: string; timeout?: number }): Promise<unknown>;
+  waitForSelector(selector: string, options?: { timeout?: number; state?: string }): Promise<unknown>;
+  fill(selector: string, value: string, options?: { timeout?: number }): Promise<void>;
+  inputValue(selector: string, options?: { timeout?: number }): Promise<string>;
+  press(selector: string, key: string, options?: { timeout?: number }): Promise<void>;
+  $(selector: string): Promise<unknown>;
+}
+
+export interface BrowserSession {
+  page: PageLike;
+  close(): Promise<void>;
+}
+
+export interface LaunchOptions {
+  headless?: boolean;
+  /** Persistent profile directory, so the Google sign-in survives between runs. */
+  userDataDir?: string;
+  /** Overrides the bundled Chromium, e.g. a system install. */
+  executablePath?: string;
+  slowMoMs?: number;
+}
+
+/**
+ * Launches Chromium through Playwright, which is an optional dependency: the
+ * parse/geocode/timeline half of the agent runs without it.
+ */
+export async function launchChromium(options: LaunchOptions = {}): Promise<BrowserSession> {
+  const { headless = false, userDataDir, executablePath, slowMoMs } = options;
+  let playwright: typeof import('playwright');
+  try {
+    playwright = await import('playwright');
+  } catch (cause) {
+    const { AgentError } = await import('../errors.ts');
+    throw new AgentError('DRIVER_NOT_INSTALLED', 'Playwright is not installed, so the browser driver cannot start.', {
+      detail: cause instanceof Error ? cause.message : String(cause),
+      hint: 'Run "npm install playwright && npx playwright install chromium" inside earth-studio-agent/.',
+      cause,
+    });
+  }
+
+  const launchArgs = { headless, executablePath, slowMo: slowMoMs };
+  const { AgentError } = await import('../errors.ts');
+
+  try {
+    if (userDataDir !== undefined) {
+      const context = await playwright.chromium.launchPersistentContext(userDataDir, launchArgs);
+      const page = context.pages()[0] ?? (await context.newPage());
+      return { page: page as unknown as PageLike, close: () => context.close() };
+    }
+    const browser = await playwright.chromium.launch(launchArgs);
+    const page = await browser.newPage();
+    return { page: page as unknown as PageLike, close: () => browser.close() };
+  } catch (cause) {
+    throw new AgentError('DRIVER_LAUNCH_FAILED', 'Chromium could not be started.', {
+      detail: cause instanceof Error ? cause.message : String(cause),
+      hint: 'Run "npx playwright install chromium", or point --executable-path at a Chromium binary.',
+      cause,
+    });
+  }
+}

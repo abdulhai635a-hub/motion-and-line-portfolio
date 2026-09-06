@@ -1,0 +1,9 @@
+node_modules/
+*.log
+
+# Chromium profile created by --user-data-dir
+.es-profile/
+
+# Generated camera paths
+earth-studio-path.*
+*.esp

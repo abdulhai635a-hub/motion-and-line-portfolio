@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone Node subproject with its own toolchain and tsconfig.
+    "earth-studio-agent/**",
   ]),
 ]);
 

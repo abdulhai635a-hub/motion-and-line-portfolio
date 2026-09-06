@@ -1,0 +1,26 @@
+{
+  "name": "earth-studio-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Text-to-camera-path agent for Google Earth Studio (PRD v1.0)",
+  "type": "module",
+  "bin": {
+    "earth-studio-agent": "./src/cli.ts"
+  },
+  "scripts": {
+    "agent": "node src/cli.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "test:browser": "node --test test/driver.browser.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.49.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}
