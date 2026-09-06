@@ -82,6 +82,12 @@ export interface WriteOptions {
   /** Click the row's keyframe button after committing. Default true. */
   addKeyframe?: boolean;
   timeoutMs?: number;
+  /**
+   * How long to wait for the displayed value to catch up after Enter. Earth
+   * Studio updates the readout asynchronously, so reading it once, immediately,
+   * sees the old value and rejects a write that in fact succeeded.
+   */
+  settleTimeoutMs?: number;
 }
 
 export async function writeAttribute(
@@ -90,7 +96,7 @@ export async function writeAttribute(
   planned: number,
   options: WriteOptions = {},
 ): Promise<WriteResult> {
-  const { addKeyframe = true, timeoutMs = 10_000 } = options;
+  const { addKeyframe = true, timeoutMs = 10_000, settleTimeoutMs = 4_000 } = options;
   if (typeof page.click !== 'function' || page.keyboard === undefined) {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be driven.', {
       detail: 'The page object provides no click() or keyboard.',
@@ -133,16 +139,31 @@ export async function writeAttribute(
   await page.keyboard.type(formatForField(typed));
   await page.keyboard.press('Enter');
 
-  const after = await readRow(page, target);
-  const shown = parseDisplayedNumber(after.displayed);
-  const readback = target.plannedUnit === 'metres' ? shown * perDisplay : shown;
   const tolerance = readbackTolerance(planned, target.plannedUnit === 'metres' ? perDisplay : 1);
+  const toPlanned = (displayedText: string): number => {
+    const value = parseDisplayedNumber(displayedText);
+    return target.plannedUnit === 'metres' ? value * perDisplay : value;
+  };
+
+  // Poll rather than read once: the readout catches up a moment after Enter.
+  const deadline = Date.now() + settleTimeoutMs;
+  let after = await readRow(page, target);
+  let readback = toPlanned(after.displayed);
+  while (
+    Date.now() < deadline &&
+    (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance || after.editBox !== null)
+  ) {
+    await new Promise((done) => setTimeout(done, 100));
+    after = await readRow(page, target);
+    readback = toPlanned(after.displayed);
+  }
 
   if (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance) {
     throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field did not take ${planned}.`, {
       detail:
         `Typed ${formatForField(typed)} into a field reading in ${opened.unitTitle || 'unknown units'}; ` +
-        `it now shows "${after.displayed}", which is ${readback} against the ${planned} that was wanted.`,
+        `after ${settleTimeoutMs}ms it still shows "${after.displayed}", which is ${readback} ` +
+        `against the ${planned} that was wanted.`,
       hint: `Selector used: ${widget}`,
     });
   }

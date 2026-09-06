@@ -135,17 +135,19 @@
       document.getSelection().selectAllChildren(box);
 
       var finish = function (commit) {
-        if (commit) {
-          var typed = Number(box.textContent);
-          if (Number.isFinite(typed)) {
-            // The display rounds to three decimals, as the live editor does.
-            presented.textContent = String(Math.round(typed * 1000) / 1000);
-          }
-        }
+        var typed = Number(box.textContent);
         box.remove();
         widget.classList.remove('editing');
         widget.setAttribute('tabindex', '0');
         document.body.focus();
+        // The live editor updates the readout a moment after the commit, not
+        // synchronously, so a driver that reads it immediately sees the old
+        // value. The delay here is what makes that failure reproducible.
+        if (commit && Number.isFinite(typed)) {
+          setTimeout(function () {
+            presented.textContent = String(Math.round(typed * 1000) / 1000);
+          }, window.__commitDelay || 150);
+        }
       };
 
       box.addEventListener('keydown', function (event) {
@@ -186,6 +188,8 @@
   // Keyboard handling can be switched off, to stand in for a session where the
   // shortcuts never reach the application.
   window.__keyboardEnabled = true;
+  // Tests raise this to stand in for a slow session.
+  window.__commitDelay = 150;
   // The key behaviour observed on the live editor: arrows step one frame,
   // Shift+arrow steps five, Home and End jump to the ends. The readout updates
   // asynchronously there, so it does here too.

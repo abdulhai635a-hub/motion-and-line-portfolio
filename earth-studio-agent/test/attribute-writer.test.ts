@@ -156,6 +156,43 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('waits for a readout that updates slowly', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // The live editor updates the value a moment after Enter. Reading it once,
+    // immediately, saw the old value and rejected a write that had worked - the
+    // failure this test exists to prevent.
+    await page.evaluate(() => {
+      (window as unknown as { __commitDelay: number }).__commitDelay = 1_200;
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 36.2048);
+    assert.ok(Math.abs(result.readback - 36.2048) < 0.001);
+    assert.equal(await shown(page, 'latitude'), '36.205');
+    await page.close();
+  });
+
+  test('gives up if the readout never catches up, saying how long it waited', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await page.evaluate(() => {
+      (window as unknown as { __commitDelay: number }).__commitDelay = 60_000;
+    });
+
+    await assert.rejects(
+      () => writeAttribute(page as unknown as PageLike, LATITUDE, 36.2048, { settleTimeoutMs: 600 }),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_FIELD_WRITE_FAILED');
+        assert.match(error.detail ?? '', /after 600ms/);
+        return true;
+      },
+    );
+    await page.close();
+  });
+
   test('a missing attribute row names itself and points at probe', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);
