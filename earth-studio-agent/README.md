@@ -225,10 +225,31 @@ Missing required fields: camera altitude
   MISSING camera altitude        tried 4 candidates
 ```
 
-Fix them in `src/driver/selectors.ts`, or supply a corrected file at run time
-with `--selectors my-selectors.json` — no other file needs to change. The same
-check runs before every `drive`, so a UI change stops the run instead of
-silently writing nothing.
+When fields come back missing, `inspect` dumps what the page really contains —
+every editable field, its label, its attributes and a selector that reaches it:
+
+```bash
+node src/cli.ts inspect --cdp http://localhost:9222
+```
+
+```
+Page   https://earth.google.com/studio/...
+Found  5 editable field(s), 0 iframe(s)
+
+[2] input  "Latitude"
+    selector : input[aria-label="Latitude"]
+    attrs    : class="num-field" aria-label="Latitude" value="0"
+    parents  : div  <  div  <  div  <  body
+```
+
+It also says when a page has no fields at all, and whether that is because the
+editor sits inside an iframe or because this is not the editor page.
+
+Put the reported selectors at the top of the matching `candidates` list in
+`src/driver/selectors.ts`, or supply a corrected file at run time with
+`--selectors my-selectors.json` — no other file needs to change. The same check
+runs before every `drive`, so a UI change stops the run instead of silently
+writing nothing.
 
 ### Camera conventions
 
@@ -257,7 +278,7 @@ Studio rejects it, that is the expected failure mode, not a bug.
 ## Development
 
 ```bash
-npm test          # 161 tests, ~13s
+npm test          # 163 tests, ~13s
 npm run typecheck # tsc --noEmit, strict
 ```
 
