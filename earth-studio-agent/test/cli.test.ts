@@ -6,7 +6,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -16,7 +16,9 @@ const CLI = resolve(import.meta.dirname, '../src/cli.ts');
 let workspace: string;
 
 before(async () => {
-  workspace = await mkdtemp(join(tmpdir(), 'es-agent-cli-'));
+  // The space is deliberate: paths with spaces are ordinary on Windows
+  // ("C:\\Users\\first last") and have broken this CLI before.
+  workspace = await mkdtemp(join(tmpdir(), 'es agent cli '));
 });
 
 after(async () => {
@@ -167,6 +169,16 @@ describe('cli', () => {
   test('a mistyped subcommand is pointed out instead of silently planned', async () => {
     const result = await cli('verify-layuot', '--out', join(workspace, 'typo'), '--quiet');
     assert.match(result.stderr, /Did you mean the "verify-layout" command\?/);
+  });
+
+  test('runs when its own path contains a space', async () => {
+    // A hand-built `file://` + path comparison silently failed to recognise the
+    // entry point here, so the CLI exited 0 having done nothing at all.
+    const home = join(workspace, 'copy of agent');
+    await cp(resolve(import.meta.dirname, '../src'), join(home, 'src'), { recursive: true });
+    const { stdout } = await run(process.execPath, [join(home, 'src', 'cli.ts'), 'plan', 'fly to Rome', '--quiet', '--out', join(home, 'out')]);
+    assert.match(stdout, /Planned 2 keyframes/);
+    assert.match(await readFile(join(home, 'out.json'), 'utf8'), /"formatVersion": 1/);
   });
 
   test('login refuses to run without somewhere to save the session', async () => {

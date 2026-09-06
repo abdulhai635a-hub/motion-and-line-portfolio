@@ -14,6 +14,7 @@
 import { parseArgs } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
 import { planCameraPath } from './agent.ts';
@@ -482,7 +483,11 @@ async function runDrive(cli: Cli): Promise<number> {
   }
 }
 
-const isDirectRun = process.argv[1] !== undefined && import.meta.url === `file://${resolve(process.argv[1])}`;
-if (isDirectRun) {
+// Only run when this file is the entry point, not when it is imported.
+// pathToFileURL is required rather than string concatenation: it percent-encodes
+// spaces and produces the file:///C:/... form Windows uses, both of which a
+// hand-built `file://` + path would get wrong, leaving the CLI silently inert.
+const entryPoint = process.argv[1];
+if (entryPoint !== undefined && pathToFileURL(entryPoint).href === import.meta.url) {
   process.exitCode = await main(process.argv.slice(2));
 }

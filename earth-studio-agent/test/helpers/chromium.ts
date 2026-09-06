@@ -17,10 +17,17 @@ export function findChromium(): string | undefined {
 
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
   if (root === undefined || root === '' || !existsSync(root)) return undefined;
+  const layouts = [
+    ['chrome-linux', 'chrome'],
+    ['chrome-win', 'chrome.exe'],
+    ['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'],
+  ];
   for (const entry of readdirSync(root)) {
     if (!entry.startsWith('chromium-')) continue;
-    const candidate = join(root, entry, 'chrome-linux', 'chrome');
-    if (existsSync(candidate)) return candidate;
+    for (const layout of layouts) {
+      const candidate = join(root, entry, ...layout);
+      if (existsSync(candidate)) return candidate;
+    }
   }
   return undefined;
 }

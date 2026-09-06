@@ -45,11 +45,17 @@ clearly-labelled experiment — see [The .esp experiment](#the-esp-experiment).
 ## Requirements
 
 - Node.js 22.6 or newer (TypeScript runs directly, there is no build step).
-- Playwright, only for the `drive` and `verify-layout` commands:
+- Playwright, only for the `login`, `drive` and `verify-layout` commands:
   `npm install && npx playwright install chromium`.
 
 Everything else — parsing, geocoding, the timeline, all output files — works
 with no dependencies and no network.
+
+**On Windows**, PowerShell blocks npm's script wrapper by default
+(`npm.ps1 cannot be loaded because running scripts is disabled`). Either write
+`npm.cmd install` / `npm.cmd test`, or allow local scripts once with
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. The `node src/cli.ts ...`
+commands are unaffected.
 
 ## Quick start
 
@@ -211,7 +217,7 @@ Studio rejects it, that is the expected failure mode, not a bug.
 ## Development
 
 ```bash
-npm test          # 156 tests, ~9s
+npm test          # 157 tests, ~10s
 npm run typecheck # tsc --noEmit, strict
 ```
 
