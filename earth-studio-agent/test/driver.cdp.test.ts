@@ -126,6 +126,18 @@ describe('attaching over CDP', () => {
     assert.equal(response.ok, true, 'the browser should still be running after we disconnect');
   });
 
+  test('lists the tabs it can see, marking the one it attached to', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const session = await launchChromium({ cdpEndpoint: endpoint });
+    assert.ok(session.listTabs, 'an attached session should be able to list tabs');
+    const tabs = await session.listTabs();
+    assert.ok(tabs.length >= 1);
+    assert.equal(tabs.filter((tab) => tab.attached).length, 1, 'exactly one tab should be marked attached');
+    assert.ok(tabs.some((tab) => tab.url.includes('mock-earth-studio')));
+    await session.close();
+  });
+
   test('a dead endpoint is explained, with the command that fixes it', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

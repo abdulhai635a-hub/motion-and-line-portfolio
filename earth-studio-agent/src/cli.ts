@@ -506,9 +506,20 @@ async function runInspect(cli: Cli): Promise<number> {
     await writeFile(`${base}.json`, `${JSON.stringify(inspection, null, 2)}\n`, 'utf8');
     process.stdout.write(`Wrote ${base}.txt and ${base}.json\n`);
     if (inspection.fieldCount === 0) {
-      process.stdout.write('\nOpen your Earth Studio project first, then run this again.\n');
+      process.stdout.write(`\nNothing editable was found on the page this attached to:\n`);
+      process.stdout.write(`  ${inspection.title === '' ? '(no title)' : inspection.title}\n  ${inspection.url}\n`);
+      if (session.listTabs !== undefined) {
+        const tabs = await session.listTabs();
+        process.stdout.write(`\nTabs this browser has open (${tabs.length}):\n`);
+        for (const tab of tabs) {
+          process.stdout.write(`  ${tab.attached ? '->' : '  '} ${tab.title === '' ? '(no title)' : tab.title}\n`);
+          process.stdout.write(`     ${tab.url}\n`);
+        }
+      }
+      process.stdout.write('\nOpen your Earth Studio project in this browser, then run this again.\n');
       return 1;
     }
+    process.stdout.write(`\nInspected: ${inspection.title} - ${inspection.url}\n`);
     return 0;
   } finally {
     await session.close();

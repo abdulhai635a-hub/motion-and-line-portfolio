@@ -20,6 +20,8 @@ export interface PageLike {
 
 export interface BrowserSession {
   page: PageLike;
+  /** Every tab the session can see, so a wrong-tab attach is obvious. */
+  listTabs?(): Promise<Array<{ url: string; title: string; attached: boolean }>>;
   close(): Promise<void>;
 }
 
@@ -85,8 +87,19 @@ export async function launchChromium(options: LaunchOptions = {}): Promise<Brows
         pages[0] ??
         (await context.newPage());
       await page.bringToFront();
+      const listTabs = async () =>
+        Promise.all(
+          browser
+            .contexts()
+            .flatMap((each) => each.pages())
+            .map(async (candidate) => ({
+              url: candidate.url(),
+              title: await candidate.title().catch(() => ''),
+              attached: candidate === page,
+            })),
+        );
       // close() on a CDP connection disconnects; it does not shut the user's browser.
-      return { page: page as unknown as PageLike, close: () => browser.close() };
+      return { page: page as unknown as PageLike, listTabs, close: () => browser.close() };
     }
 
     if (userDataDir !== undefined) {
