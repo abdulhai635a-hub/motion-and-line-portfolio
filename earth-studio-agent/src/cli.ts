@@ -84,6 +84,8 @@ Browser (drive / verify-layout)
   --selectors <path>       JSON file overriding src/driver/selectors.ts
   --continue-on-error      keep going after a failed keyframe and report all failures
   --dry-run                plan and check the layout, but write nothing
+  --deep                   inspect only: also report every id, every custom
+                           element, and the raw HTML of the attribute rows
 
   -h, --help               show this help
 `;
@@ -171,6 +173,7 @@ function readArgs(argv: string[]): Cli {
       selectors: { type: 'string' },
       'continue-on-error': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
+      deep: { type: 'boolean' },
     },
   });
   // The first positional is a subcommand only when it is exactly one of the
@@ -493,7 +496,7 @@ async function runVerifyLayout(cli: Cli): Promise<number> {
 async function runInspect(cli: Cli): Promise<number> {
   const { session } = await openDriver(cli);
   try {
-    const inspection = await inspectPage(session.page);
+    const inspection = await inspectPage(session.page, 60, cli.values.deep === true);
     const text = renderInspection(inspection);
     process.stdout.write(`${text}\n`);
     const prefix = typeof cli.values.out === 'string' ? cli.values.out : 'earth-studio-fields';

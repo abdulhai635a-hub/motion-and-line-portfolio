@@ -30,9 +30,26 @@ export interface Inspection {
   /** Present when the page has no editable fields at all, to explain why. */
   note?: string;
   fields: FieldRow[];
+  /** Only filled in by `--deep`, which digs past the obvious form controls. */
+  deep?: DeepInspection;
 }
 
-export async function inspectPage(page: PageLike, limit = 60): Promise<Inspection> {
+/**
+ * The wider sweep. Earth Studio's numeric attributes are not plain inputs - the
+ * shallow pass finds only the "add to timeline" checkboxes - so this reports
+ * every id on the page, every custom element, and the raw HTML of the rows that
+ * hold the camera attributes, which is what new selectors get written from.
+ */
+export interface DeepInspection {
+  ids: string[];
+  customElements: string[];
+  /** Elements carrying a numeric-looking value, however they are built. */
+  numericLike: Array<{ tag: string; selector: string; label: string; text: string; attributes: Record<string, string> }>;
+  /** Raw HTML of a few attribute rows, truncated. */
+  samples: Array<{ around: string; html: string }>;
+}
+
+export async function inspectPage(page: PageLike, limit = 60, deep = false): Promise<Inspection> {
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be inspected.', {
       detail: 'The page object has no evaluate() method.',
@@ -154,7 +171,74 @@ export async function inspectPage(page: PageLike, limit = 60): Promise<Inspectio
     return { url: location.href, title: document.title, fieldCount: fields.length, iframeCount, note, fields };
   });
 
-  return { ...raw, fields: raw.fields.slice(0, limit) };
+  const inspection: Inspection = { ...raw, fields: raw.fields.slice(0, limit) };
+  if (deep) inspection.deep = await deepInspect(page);
+  return inspection;
+}
+
+/** The wider sweep, run only for `--deep`. */
+async function deepInspect(page: PageLike): Promise<DeepInspection> {
+  if (typeof page.evaluate !== 'function') {
+    throw new AgentError('DRIVER_NOT_READY', 'This page cannot be inspected.');
+  }
+  return page.evaluate<DeepInspection>(() => {
+    const attributesOf = (element: Element): Record<string, string> => {
+      const result: Record<string, string> = {};
+      for (const attribute of Array.from(element.attributes)) {
+        if (attribute.name === 'style' || attribute.name === 'class') continue;
+        result[attribute.name] = attribute.value.slice(0, 120);
+      }
+      return result;
+    };
+
+    const ids = Array.from(document.querySelectorAll('[id]'))
+      .map((element) => element.id)
+      .filter((id) => id !== '');
+
+    const customElements = Array.from(
+      new Set(
+        Array.from(document.querySelectorAll('*'))
+          .map((element) => element.tagName.toLowerCase())
+          .filter((tag) => tag.includes('-')),
+      ),
+    );
+
+    // Anything whose own text is a bare number is a candidate value field,
+    // whatever element it is built from.
+    const numericLike: DeepInspection['numericLike'] = [];
+    for (const element of Array.from(document.querySelectorAll('*'))) {
+      if (element.children.length > 0) continue;
+      const text = (element.textContent ?? '').trim();
+      if (text === '' || text.length > 24) continue;
+      if (!/^-?[\d,]+(\.\d+)?$/.test(text)) continue;
+      const tag = element.tagName.toLowerCase();
+      const id = element.id;
+      const selector = id !== '' ? `#${id}` : tag;
+      let label = '';
+      let ancestor: Element | null = element.parentElement;
+      for (let depth = 0; depth < 3 && ancestor !== null && label === ''; depth += 1) {
+        const text = ancestor.getAttribute('title') ?? ancestor.getAttribute('aria-label') ?? '';
+        if (text !== '') label = text.slice(0, 60);
+        ancestor = ancestor.parentElement;
+      }
+      numericLike.push({ tag, selector, label, text, attributes: attributesOf(element) });
+      if (numericLike.length >= 40) break;
+    }
+
+    // Raw HTML of a row that holds a camera attribute, which shows exactly how
+    // the value field is built.
+    const samples: DeepInspection['samples'] = [];
+    for (const id of ['rotationZ', 'rotationX', 'rotationY', 'altitude', 'latitude', 'longitude', 'currentFrame']) {
+      const anchor = document.getElementById(id);
+      if (anchor === null) continue;
+      const row = anchor.closest('li') ?? anchor.parentElement?.parentElement ?? anchor.parentElement;
+      if (row === null || row === undefined) continue;
+      samples.push({ around: `#${id}`, html: row.outerHTML.slice(0, 2000) });
+      if (samples.length >= 2) break;
+    }
+
+    return { ids, customElements, numericLike, samples };
+  });
 }
 
 export function renderInspection(inspection: Inspection): string {
@@ -184,6 +268,29 @@ export function renderInspection(inspection: Inspection): string {
     if (ancestors !== '') lines.push(`    parents  : ${ancestors}`);
     lines.push('');
   });
+
+  const deep = inspection.deep;
+  if (deep !== undefined) {
+    lines.push('-'.repeat(72));
+    lines.push(`Element ids (${deep.ids.length})`);
+    lines.push(`  ${deep.ids.join(', ')}`);
+    lines.push('');
+    lines.push(`Custom elements (${deep.customElements.length})`);
+    lines.push(`  ${deep.customElements.length === 0 ? '(none)' : deep.customElements.join(', ')}`);
+    lines.push('');
+    lines.push(`Elements holding a number (${deep.numericLike.length})`);
+    for (const entry of deep.numericLike) {
+      const attributes = Object.entries(entry.attributes).map(([name, value]) => `${name}="${value}"`).join(' ');
+      lines.push(`  ${entry.tag.padEnd(8)} ${entry.selector.padEnd(24)} ${JSON.stringify(entry.text).padEnd(14)} ${entry.label}`);
+      if (attributes !== '') lines.push(`           ${attributes}`);
+    }
+    lines.push('');
+    for (const sample of deep.samples) {
+      lines.push(`Raw HTML of the row around ${sample.around}`);
+      lines.push(sample.html);
+      lines.push('');
+    }
+  }
 
   return lines.join('\n');
 }

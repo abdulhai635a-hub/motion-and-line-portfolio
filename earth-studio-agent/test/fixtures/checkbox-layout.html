@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Checkbox-only layout</title></head>
+<body>
+<!--
+  Mimics what the live Earth Studio actually returned: the only plain inputs on
+  the page are "add to timeline" checkboxes, while the numeric value each row
+  edits is built from something else. The deep inspection must still surface the
+  ids, the numeric-carrying elements and the raw row HTML.
+-->
+<div class="panel">
+  <ul>
+    <li title="Adjust the camera's roll">
+      <span class="name">Roll</span>
+      <input id="rotationZ" type="checkbox" data-value="model.inTimeline">
+      <div class="scrubber" data-attr="rotationZ"><span class="readout">12.5</span></div>
+    </li>
+    <li title="Camera altitude">
+      <span class="name">Altitude</span>
+      <input id="altitude" type="checkbox" data-value="model.inTimeline">
+      <div class="scrubber" data-attr="altitude"><span class="readout">1500</span></div>
+    </li>
+  </ul>
+</div>
+</body>
+</html>

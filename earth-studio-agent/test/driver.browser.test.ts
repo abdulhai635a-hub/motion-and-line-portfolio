@@ -251,6 +251,38 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
+  test('deep inspection surfaces the fields the shallow pass cannot see', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    assert.ok(browser);
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/checkbox-layout.html')).href);
+
+    const { inspectPage, renderInspection } = await import('../src/driver/inspect.ts');
+    const shallow = await inspectPage(page as unknown as PageLike);
+    // The shallow pass sees only the timeline checkboxes, exactly as it did
+    // against the live product - which is why --deep exists.
+    assert.equal(shallow.fieldCount, 2);
+    assert.equal(shallow.deep, undefined);
+
+    const deep = await inspectPage(page as unknown as PageLike, 60, true);
+    assert.ok(deep.deep);
+    assert.deepEqual(deep.deep.ids, ['rotationZ', 'altitude']);
+    assert.ok(
+      deep.deep.numericLike.some((entry) => entry.text === '1500'),
+      'the altitude readout should be reported as a numeric element',
+    );
+    assert.ok(
+      deep.deep.samples.some((sample) => sample.html.includes('data-attr="rotationZ"')),
+      'the raw row HTML should show how the value field is built',
+    );
+
+    const text = renderInspection(deep);
+    assert.match(text, /Element ids \(2\)/);
+    assert.match(text, /Raw HTML of the row around #rotationZ/);
+    await page.close();
+  });
+
   test('inspect says why a page with no fields has none', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
