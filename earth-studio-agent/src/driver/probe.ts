@@ -222,6 +222,8 @@ export interface PlayheadStep {
   what: string;
   readout: string;
   focused: string;
+  /** Every element matching the readout selector, not only the first. */
+  allReadouts: string[];
 }
 
 export interface PlayheadReport {
@@ -231,7 +233,7 @@ export interface PlayheadReport {
 
 const READOUT_CANDIDATES = ['li.control.timecode', '.timecode', '[data-value="model.timecode"]'];
 
-export async function probePlayhead(page: PageLike): Promise<PlayheadReport> {
+export async function probePlayhead(page: PageLike, settleMs = 400): Promise<PlayheadReport> {
   if (typeof page.evaluate !== 'function' || typeof page.click !== 'function' || page.keyboard === undefined) {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be probed.');
   }
@@ -254,17 +256,26 @@ export async function probePlayhead(page: PageLike): Promise<PlayheadReport> {
 
   const steps: PlayheadStep[] = [];
   const record = async (what: string): Promise<void> => {
-    const state = await page.evaluate!<{ readout: string; focused: string }>(
+    // The readout does not update synchronously, and reading it straight after
+    // a keystroke returned stale text that made the keys look inert or absurd
+    // ("Home" appearing to give frame 7). Give the app a moment to settle.
+    await new Promise((done) => setTimeout(done, settleMs));
+    const state = await page.evaluate!<Omit<PlayheadStep, 'what'>>(
       new Function(`
-        const node = document.querySelector(${JSON.stringify(readoutSelector)});
+        const nodes = Array.from(document.querySelectorAll(${JSON.stringify(readoutSelector)}));
         const active = document.activeElement;
         const describe = (element) => {
           if (element === null) return '(none)';
           const classes = element.className ? String(element.className).trim().split(/\\s+/).join('.') : '';
           return element.tagName.toLowerCase() + (classes === '' ? '' : '.' + classes);
         };
-        return { readout: node === null ? '(gone)' : (node.textContent || '').trim(), focused: describe(active) };
-      `) as () => { readout: string; focused: string },
+        const texts = nodes.map((node) => (node.textContent || '').trim());
+        return {
+          readout: texts.length === 0 ? '(gone)' : texts[0],
+          allReadouts: texts,
+          focused: describe(active),
+        };
+      `) as () => Omit<PlayheadStep, 'what'>,
     );
     steps.push({ what, ...state });
   };
@@ -320,9 +331,14 @@ export async function probePlayhead(page: PageLike): Promise<PlayheadReport> {
 
 export function renderPlayhead(report: PlayheadReport): string {
   const lines = [`Playhead readout: ${report.readoutSelector}`, ''];
-  lines.push(`  ${'step'.padEnd(30)} ${'readout'.padEnd(16)} focused`);
+  lines.push(`  ${'step'.padEnd(32)} ${'readout'.padEnd(16)} focused`);
   for (const step of report.steps) {
-    lines.push(`  ${step.what.padEnd(30)} ${step.readout.padEnd(16)} ${step.focused}`);
+    const extra = step.allReadouts.length > 1 ? `   all: [${step.allReadouts.join(' | ')}]` : '';
+    lines.push(`  ${step.what.padEnd(32)} ${step.readout.padEnd(16)} ${step.focused}${extra}`);
+  }
+  if (report.steps.some((step) => step.allReadouts.length > 1)) {
+    lines.push('');
+    lines.push('  More than one element matches the readout selector, so the first may not be the playhead.');
   }
   return lines.join('\n');
 }
