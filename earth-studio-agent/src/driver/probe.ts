@@ -103,12 +103,24 @@ export async function probeAttribute(
   type: string,
   typeValue?: string,
 ): Promise<InteractionReport> {
+  return probeSelector(page, `[data-attribute-type="${type}"]`, `[data-attribute-type="${type}"] .scrub-input.valueInput`, type, typeValue);
+}
+
+/**
+ * Clicks any element and records the same before/after picture. The playhead
+ * control is not an attribute row, so it needs this rather than probeAttribute.
+ */
+export async function probeSelector(
+  page: PageLike,
+  rowSelector: string,
+  widgetSelector: string,
+  label: string,
+  typeValue?: string,
+): Promise<InteractionReport> {
   if (typeof page.evaluate !== 'function' || typeof page.click !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be probed.');
   }
-
-  const rowSelector = `[data-attribute-type="${type}"]`;
-  const widgetSelector = `${rowSelector} .scrub-input.valueInput`;
+  const type = label;
   const steps: InteractionStep[] = [];
 
   const snapshot = async (what: string): Promise<void> => {
@@ -139,7 +151,7 @@ export async function probeAttribute(
   try {
     await page.click(widgetSelector, { timeout: 5_000 });
   } catch (cause) {
-    throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `Could not click the ${type} value widget.`, {
+    throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `Could not click the ${type} widget.`, {
       detail: cause instanceof Error ? cause.message : String(cause),
       hint: `Selector used: ${widgetSelector}`,
       cause,

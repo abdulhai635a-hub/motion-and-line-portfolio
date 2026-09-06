@@ -54,24 +54,69 @@
 </div>
 <script>
 (function () {
+  // Mirrors the gesture the live editor was observed to use: clicking the value
+  // widget adds an "editing" class and inserts
+  //   <div contenteditable="true" class="input">FULL PRECISION VALUE</div>
+  // inside .presentedValueContainer, with the text selected. Enter commits and
+  // Escape cancels, both removing the div and restoring .presentedValue.
+  //
+  // The full-precision text matters: it is how the driver works out whether the
+  // edit box uses the same unit as the rounded display.
+  var PRECISE = {
+    longitude: '131.5689731',
+    latitude: '29.3228910257184',
+    altitude: '63170.4821'
+  };
+
   document.querySelectorAll('.scrub-input').forEach(function (widget) {
     widget.addEventListener('click', function () {
-      if (widget.querySelector('input')) return;
-      var readout = widget.querySelector('.presentedValueContainer');
-      var input = document.createElement('input');
-      input.className = 'scrub-input-edit';
-      input.value = widget.querySelector('.presentedValue').textContent;
-      if (readout) readout.style.display = 'none';
-      widget.insertBefore(input, widget.firstChild);
-      input.focus();
-      input.select();
-      input.addEventListener('keydown', function (event) {
-        if (event.key === 'Escape') { input.remove(); if (readout) readout.style.display = ''; return; }
-        if (event.key !== 'Enter') return;
-        widget.querySelector('.presentedValue').textContent = input.value;
-        input.remove();
-        if (readout) readout.style.display = '';
+      if (widget.querySelector('[contenteditable]')) return;
+      var row = widget.closest('[data-attribute-type]');
+      var type = row ? row.getAttribute('data-attribute-type') : '';
+      var presented = widget.querySelector('.presentedValue');
+      var container = widget.querySelector('.presentedValueContainer');
+      var box = document.createElement('div');
+      box.setAttribute('contenteditable', 'true');
+      box.className = 'input';
+      box.textContent = PRECISE[type] || presented.textContent;
+      container.appendChild(box);
+      widget.classList.add('editing');
+      widget.setAttribute('tabindex', '-1');
+      box.focus();
+      document.getSelection().selectAllChildren(box);
+
+      var finish = function (commit) {
+        if (commit) {
+          var typed = Number(box.textContent);
+          if (Number.isFinite(typed)) {
+            // The display rounds to three decimals, as the live editor does.
+            presented.textContent = String(Math.round(typed * 1000) / 1000);
+          }
+        }
+        box.remove();
+        widget.classList.remove('editing');
+        widget.setAttribute('tabindex', '0');
+        document.body.focus();
+      };
+
+      box.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+        if (event.key === 'Enter') { event.preventDefault(); finish(true); }
       });
+    });
+  });
+
+  // Every attribute row carries an "add keyframe" button.
+  window.__keyframesAdded = [];
+  document.querySelectorAll('[data-action="click:addKeyframe"]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var row = button.closest('[data-attribute-type]');
+      window.__keyframesAdded.push({
+        type: row ? row.getAttribute('data-attribute-type') : '',
+        frame: Number((document.querySelector('.timecode .presentedValue') || {}).textContent || 0),
+        value: row ? row.querySelector('.presentedValue').textContent : ''
+      });
+      button.classList.add('has-keyframe');
     });
   });
 })();

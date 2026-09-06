@@ -25,7 +25,7 @@ import { EarthStudioDriver, EARTH_STUDIO_URL } from './driver/earth-studio-drive
 import { launchChromium } from './driver/page.ts';
 import { mergeSelectors } from './driver/selectors.ts';
 import { inspectPage, renderInspection } from './driver/inspect.ts';
-import { probeAttribute, renderInteraction, renderSurvey, surveyAttributes } from './driver/probe.ts';
+import { probeAttribute, probeSelector, renderInteraction, renderSurvey, surveyAttributes } from './driver/probe.ts';
 import {
   Geocoder,
   createNominatimProvider,
@@ -92,6 +92,8 @@ Browser (drive / verify-layout)
                            this selector (repeatable)
   --attribute <type>       probe only: click this attribute's value widget and
                            report what the page does, e.g. --attribute latitude
+  --click <css>            probe only: click any element instead, for controls
+                           that are not attribute rows (the playhead, say)
   --type-value <text>      probe only: also type this, then press Escape to
                            cancel, so the editing gesture can be seen end to end
 
@@ -186,6 +188,7 @@ function readArgs(argv: string[]): Cli {
       deep: { type: 'boolean' },
       html: { type: 'string', multiple: true },
       attribute: { type: 'string' },
+      click: { type: 'string' },
       'type-value': { type: 'string' },
     },
   });
@@ -550,11 +553,14 @@ async function runProbe(cli: Cli): Promise<number> {
     const survey = await surveyAttributes(session.page);
     const parts = [renderSurvey(survey)];
 
+    const typeValue = typeof cli.values['type-value'] === 'string' ? cli.values['type-value'] : undefined;
     const attribute = typeof cli.values.attribute === 'string' ? cli.values.attribute : undefined;
     if (attribute !== undefined) {
-      const typeValue = typeof cli.values['type-value'] === 'string' ? cli.values['type-value'] : undefined;
-      const interaction = await probeAttribute(session.page, attribute, typeValue);
-      parts.push('', renderInteraction(interaction));
+      parts.push('', renderInteraction(await probeAttribute(session.page, attribute, typeValue)));
+    }
+    const clickTarget = typeof cli.values.click === 'string' ? cli.values.click : undefined;
+    if (clickTarget !== undefined) {
+      parts.push('', renderInteraction(await probeSelector(session.page, clickTarget, clickTarget, clickTarget, typeValue)));
     }
 
     const text = parts.join('\n');
