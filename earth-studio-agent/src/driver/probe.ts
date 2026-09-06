@@ -204,3 +204,113 @@ export function renderInteraction(report: InteractionReport): string {
   }
   return lines.join('\n');
 }
+
+
+/**
+ * Works out how the playhead is moved.
+ *
+ * The timecode readout turned out to be `li.control.timecode` with
+ * `data-action="click:toggleTimeFormat"`: clicking it only switches between a
+ * frame count and a timecode, and it cannot be typed into. So the playhead has
+ * to be driven some other way, and the obvious candidate is the keyboard.
+ *
+ * This presses the usual transport keys and records what the readout does after
+ * each, which settles both questions at once: which keys move the playhead, and
+ * how to read the frame number back.
+ */
+export interface PlayheadStep {
+  what: string;
+  readout: string;
+  focused: string;
+}
+
+export interface PlayheadReport {
+  readoutSelector: string;
+  steps: PlayheadStep[];
+}
+
+const READOUT_CANDIDATES = ['li.control.timecode', '.timecode', '[data-value="model.timecode"]'];
+
+export async function probePlayhead(page: PageLike): Promise<PlayheadReport> {
+  if (typeof page.evaluate !== 'function' || typeof page.click !== 'function' || page.keyboard === undefined) {
+    throw new AgentError('DRIVER_NOT_READY', 'This page cannot be probed.');
+  }
+
+  let readoutSelector = '';
+  for (const candidate of READOUT_CANDIDATES) {
+    const found = await page.evaluate<boolean>(
+      new Function(`return document.querySelector(${JSON.stringify(candidate)}) !== null;`) as () => boolean,
+    );
+    if (found) {
+      readoutSelector = candidate;
+      break;
+    }
+  }
+  if (readoutSelector === '') {
+    throw new AgentError('DRIVER_FRAME_SEEK_FAILED', 'No timecode readout was found on the page.', {
+      detail: `Tried: ${READOUT_CANDIDATES.join(', ')}`,
+    });
+  }
+
+  const steps: PlayheadStep[] = [];
+  const record = async (what: string): Promise<void> => {
+    const state = await page.evaluate!<{ readout: string; focused: string }>(
+      new Function(`
+        const node = document.querySelector(${JSON.stringify(readoutSelector)});
+        const active = document.activeElement;
+        const describe = (element) => {
+          if (element === null) return '(none)';
+          const classes = element.className ? String(element.className).trim().split(/\\s+/).join('.') : '';
+          return element.tagName.toLowerCase() + (classes === '' ? '' : '.' + classes);
+        };
+        return { readout: node === null ? '(gone)' : (node.textContent || '').trim(), focused: describe(active) };
+      `) as () => { readout: string; focused: string },
+    );
+    steps.push({ what, ...state });
+  };
+
+  await record('at rest');
+
+  // The readout cycles through display formats on click; three clicks show the
+  // whole cycle, so the driver knows how to read a frame number back.
+  for (let click = 1; click <= 3; click += 1) {
+    await page.click(readoutSelector, { timeout: 5_000 });
+    await record(`after click ${click} on the readout`);
+  }
+
+  // Leave the readout on the plain frame count before pressing anything: in
+  // timecode format a one-frame move is invisible, which would make the keys
+  // look like they did nothing.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const current = steps.at(-1)?.readout ?? '';
+    if (/^-?\d+$/.test(current)) break;
+    await page.click(readoutSelector, { timeout: 5_000 });
+    await record('switching the readout to frames');
+  }
+
+  // Transport keys. Each is pressed with the page body focused, which is where
+  // focus sits after the readout is clicked.
+  const presses: Array<[string, string, number]> = [
+    ['Home', 'Home', 1],
+    ['ArrowRight x5', 'ArrowRight', 5],
+    ['ArrowLeft x2', 'ArrowLeft', 2],
+    ['PageDown', 'PageDown', 1],
+    ['End', 'End', 1],
+    ['Home again', 'Home', 1],
+  ];
+  for (const [label, key, times] of presses) {
+    for (let press = 0; press < times; press += 1) await page.keyboard.press(key);
+    await record(`after ${label}`);
+  }
+
+  return { readoutSelector, steps };
+}
+
+export function renderPlayhead(report: PlayheadReport): string {
+  const lines = [`Playhead readout: ${report.readoutSelector}`, ''];
+  lines.push(`  ${'step'.padEnd(30)} ${'readout'.padEnd(16)} focused`);
+  for (const step of report.steps) {
+    lines.push(`  ${step.what.padEnd(30)} ${step.readout.padEnd(16)} ${step.focused}`);
+  }
+  return lines.join('\n');
+}

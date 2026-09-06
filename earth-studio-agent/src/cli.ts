@@ -25,7 +25,15 @@ import { EarthStudioDriver, EARTH_STUDIO_URL } from './driver/earth-studio-drive
 import { launchChromium } from './driver/page.ts';
 import { mergeSelectors } from './driver/selectors.ts';
 import { inspectPage, renderInspection } from './driver/inspect.ts';
-import { probeAttribute, probeSelector, renderInteraction, renderSurvey, surveyAttributes } from './driver/probe.ts';
+import {
+  probeAttribute,
+  probePlayhead,
+  probeSelector,
+  renderInteraction,
+  renderPlayhead,
+  renderSurvey,
+  surveyAttributes,
+} from './driver/probe.ts';
 import {
   Geocoder,
   createNominatimProvider,
@@ -94,6 +102,8 @@ Browser (drive / verify-layout)
                            report what the page does, e.g. --attribute latitude
   --click <css>            probe only: click any element instead, for controls
                            that are not attribute rows (the playhead, say)
+  --playhead               probe only: work out how the playhead is moved and
+                           how its frame number is read back
   --type-value <text>      probe only: also type this, then press Escape to
                            cancel, so the editing gesture can be seen end to end
 
@@ -189,6 +199,7 @@ function readArgs(argv: string[]): Cli {
       html: { type: 'string', multiple: true },
       attribute: { type: 'string' },
       click: { type: 'string' },
+      playhead: { type: 'boolean' },
       'type-value': { type: 'string' },
     },
   });
@@ -557,6 +568,9 @@ async function runProbe(cli: Cli): Promise<number> {
     const attribute = typeof cli.values.attribute === 'string' ? cli.values.attribute : undefined;
     if (attribute !== undefined) {
       parts.push('', renderInteraction(await probeAttribute(session.page, attribute, typeValue)));
+    }
+    if (cli.values.playhead === true) {
+      parts.push('', renderPlayhead(await probePlayhead(session.page)));
     }
     const clickTarget = typeof cli.values.click === 'string' ? cli.values.click : undefined;
     if (clickTarget !== undefined) {

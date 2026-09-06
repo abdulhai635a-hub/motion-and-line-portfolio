@@ -7,7 +7,14 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import type { Browser, Page } from 'playwright';
-import { probeAttribute, renderInteraction, renderSurvey, surveyAttributes } from '../src/driver/probe.ts';
+import {
+  probeAttribute,
+  probePlayhead,
+  renderInteraction,
+  renderPlayhead,
+  renderSurvey,
+  surveyAttributes,
+} from '../src/driver/probe.ts';
 import { findChromium } from './helpers/chromium.ts';
 import type { PageLike } from '../src/driver/page.ts';
 
@@ -153,6 +160,56 @@ describe('interaction probe', () => {
         return true;
       },
     );
+    await page.close();
+  });
+});
+
+describe('playhead probe', () => {
+  test('finds the readout and reports what each transport key does', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    const report = await probePlayhead(page as unknown as PageLike);
+
+    assert.equal(report.readoutSelector, 'li.control.timecode');
+
+    const at = (what: string): string | undefined =>
+      report.steps.find((step) => step.what === what)?.readout;
+    assert.equal(at('after Home'), '0');
+    assert.equal(at('after ArrowRight x5'), '5');
+    assert.equal(at('after ArrowLeft x2'), '3');
+    assert.equal(at('after End'), '390');
+    assert.equal(at('after Home again'), '0');
+    await page.close();
+  });
+
+  test('leaves the readout on frames, so a one-frame move is visible', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // Start in timecode format, which is what a previous probe leaves behind.
+    await page.click('li.control.timecode');
+    assert.match((await page.locator('li.control.timecode').textContent()) ?? '', /:/);
+
+    const report = await probePlayhead(page as unknown as PageLike);
+    const afterHome = report.steps.find((step) => step.what === 'after Home')?.readout ?? '';
+    assert.match(afterHome, /^\d+$/, `readout was "${afterHome}", not a frame count`);
+    assert.match(renderPlayhead(report), /Playhead readout/);
+    await page.close();
+  });
+
+  test('the format cycle is recorded, so a frame number can be read back', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    const report = await probePlayhead(page as unknown as PageLike);
+    const clicks = report.steps
+      .filter((step) => step.what.startsWith('after click'))
+      .map((step) => step.readout);
+    // Two formats: a frame count and a timecode, alternating.
+    assert.equal(new Set(clicks).size, 2);
+    assert.ok(clicks.some((value) => /^\d+$/.test(value)));
+    assert.ok(clicks.some((value) => value.includes(':')));
     await page.close();
   });
 });
