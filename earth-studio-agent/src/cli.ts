@@ -24,6 +24,7 @@ import { buildEspProject } from './esp.ts';
 import { EarthStudioDriver, EARTH_STUDIO_URL } from './driver/earth-studio-driver.ts';
 import { launchChromium } from './driver/page.ts';
 import { mergeSelectors } from './driver/selectors.ts';
+import { inspectPage, renderInspection } from './driver/inspect.ts';
 import {
   Geocoder,
   createNominatimProvider,
@@ -43,6 +44,7 @@ Usage
   earth-studio-agent drive "<command>"   [options]   plan, then type it into Earth Studio
   earth-studio-agent login               [options]   sign in to Google once and remember the session
   earth-studio-agent verify-layout       [options]   check the UI selectors against the live app
+  earth-studio-agent inspect             [options]   dump the page's real fields, to fix the selectors
   earth-studio-agent places                          list the built-in place names
 
 Input
@@ -86,7 +88,7 @@ Browser (drive / verify-layout)
   -h, --help               show this help
 `;
 
-const KNOWN_COMMANDS = new Set(['plan', 'drive', 'login', 'verify-layout', 'places', 'help']);
+const KNOWN_COMMANDS = new Set(['plan', 'drive', 'login', 'verify-layout', 'inspect', 'places', 'help']);
 
 interface Cli {
   command: string;
@@ -118,6 +120,8 @@ export async function main(argv: string[]): Promise<number> {
         return await runLogin(cli);
       case 'verify-layout':
         return await runVerifyLayout(cli);
+      case 'inspect':
+        return await runInspect(cli);
       case 'places':
         process.stdout.write(`${knownNames().join('\n')}\n`);
         return 0;
@@ -476,6 +480,33 @@ async function runVerifyLayout(cli: Cli): Promise<number> {
     const report = await driver.verifyLayout();
     process.stdout.write(`${renderLayoutReport(report)}\n`);
     return report.ok ? 0 : 1;
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Dumps the live page's editable fields so the selector file can be corrected
+ * from what is actually there. This is the answer to a verify-layout that
+ * reports missing fields.
+ */
+async function runInspect(cli: Cli): Promise<number> {
+  const { session } = await openDriver(cli);
+  try {
+    const inspection = await inspectPage(session.page);
+    const text = renderInspection(inspection);
+    process.stdout.write(`${text}\n`);
+    const prefix = typeof cli.values.out === 'string' ? cli.values.out : 'earth-studio-fields';
+    const base = resolve(prefix);
+    await mkdir(dirname(base), { recursive: true });
+    await writeFile(`${base}.txt`, text, 'utf8');
+    await writeFile(`${base}.json`, `${JSON.stringify(inspection, null, 2)}\n`, 'utf8');
+    process.stdout.write(`Wrote ${base}.txt and ${base}.json\n`);
+    if (inspection.fieldCount === 0) {
+      process.stdout.write('\nOpen your Earth Studio project first, then run this again.\n');
+      return 1;
+    }
+    return 0;
   } finally {
     await session.close();
   }

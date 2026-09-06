@@ -221,6 +221,49 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
+  test('inspect describes a layout the default selectors do not know', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    assert.ok(browser);
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(resolve(import.meta.dirname, 'fixtures/unknown-layout.html')).href);
+
+    const { inspectPage, renderInspection } = await import('../src/driver/inspect.ts');
+    const inspection = await inspectPage(page as unknown as PageLike);
+
+    assert.equal(inspection.fieldCount, 5);
+    assert.equal(inspection.iframeCount, 0);
+    assert.deepEqual(
+      inspection.fields.map((field) => field.label),
+      ['Frame', 'Latitude', 'Longitude', 'Altitude', 'Pan'],
+    );
+
+    // Every reported selector must actually reach exactly the field it describes:
+    // a selector that does not resolve is worse than no report at all.
+    for (const field of inspection.fields) {
+      const count = await page.locator(field.selector).count();
+      assert.equal(count, 1, `${field.selector} matched ${count} elements`);
+    }
+
+    const text = renderInspection(inspection);
+    assert.match(text, /#playhead-frame/);
+    assert.match(text, /aria-label="Altitude"/);
+    await page.close();
+  });
+
+  test('inspect says why a page with no fields has none', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    assert.ok(browser);
+    const page = await browser.newPage();
+    await page.setContent('<h1>Sign in to continue</h1>');
+    const { inspectPage } = await import('../src/driver/inspect.ts');
+    const inspection = await inspectPage(page as unknown as PageLike);
+    assert.equal(inspection.fieldCount, 0);
+    assert.match(inspection.note ?? '', /not the editor page/);
+    await page.close();
+  });
+
   test('a long multi-place path is written in full', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);
