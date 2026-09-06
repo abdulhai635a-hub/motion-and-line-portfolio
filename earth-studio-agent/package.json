@@ -11,7 +11,8 @@
     "agent": "node src/cli.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "test:browser": "node --test test/driver.browser.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:extension": "node scripts/build-extension.mjs"
   },
   "engines": {
     "node": ">=22.6"
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^20",
+    "esbuild": "^0.28.2",
     "typescript": "^5"
   }
 }

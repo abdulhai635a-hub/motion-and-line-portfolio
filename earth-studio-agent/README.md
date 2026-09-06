@@ -42,6 +42,56 @@ Studio's own keyframe engine does the work and nothing about the file format is
 guessed. Option B (writing a project file directly) is included only as a
 clearly-labelled experiment — see [The .esp experiment](#the-esp-experiment).
 
+## Two ways to use it
+
+**As a Chrome extension** — open Earth Studio, type the command in the side
+panel in any language, and the keyframes appear. Nothing to install beyond the
+extension itself: the content script runs inside the page, so there is no
+Playwright, no debugging port and no terminal. See
+[Chrome extension](#chrome-extension).
+
+**As a CLI** — plan a path to a file, review it, and drive a browser to write
+it. Useful for scripting, for reviewing a path before it touches a project, and
+for the `probe` and `inspect` commands that re-derive the selectors.
+
+Both run the same tested code: the parser, geocoder and timeline are shared, and
+the driver is written against a small page interface that Playwright satisfies
+in the CLI and the DOM satisfies in the extension.
+
+## Chrome extension
+
+```bash
+cd earth-studio-agent
+npm install
+npm run build:extension      # only needed after changing the source
+```
+
+Then in Chrome: **chrome://extensions** → turn on **Developer mode** → **Load
+unpacked** → choose `earth-studio-agent/extension`.
+
+Open your project at earth.google.com/studio, click the extension's toolbar
+button to open the side panel, type the command, and press **Write keyframes**.
+**Plan only** works out the path and shows it without touching the project.
+
+### Any language
+
+The command may be written in any language. English goes straight to the parser;
+anything else is translated first, which also does the right thing with place
+names — Bengali "মাউন্ট ফুজি" comes back as "Mount Fuji", which is what the
+geocoder wants. Translation uses Chrome's built-in on-device translator
+(Chrome 138+), so it needs no key, no account and no network. Where that is
+unavailable the panel says so rather than handing the parser text it cannot
+read.
+
+### What the extension needs
+
+- Permission for `https://earth.google.com/*`, to run in the editor.
+- Optionally `https://nominatim.openstreetmap.org/*`, only if you tick "look
+  unknown places up on OpenStreetMap".
+
+It reads and writes nothing else, and sends the command nowhere: parsing,
+geocoding against the built-in table, and driving all happen in the browser.
+
 ## Requirements
 
 - Node.js 22.6 or newer (TypeScript runs directly, there is no build step).
@@ -344,7 +394,7 @@ Studio rejects it, that is the expected failure mode, not a bug.
 ## Development
 
 ```bash
-npm test          # 205 tests, ~40s
+npm test          # 240 tests, ~50s
 npm run typecheck # tsc --noEmit, strict
 ```
 
@@ -363,6 +413,10 @@ CLI. Two parts are worth calling out:
 - **`test/driver.cdp.test.ts`** starts a browser with `--remote-debugging-port`
   exactly as the instructions above tell you to, attaches to it, writes a whole
   plan into it, and checks that disconnecting leaves it running.
+- **`test/extension.test.ts`** builds the bundle the extension ships, injects it
+  into the fixture and calls it exactly as the content script does. That is the
+  only way to know that a content script's synthetic clicks and keystrokes reach
+  Earth Studio's handlers at all, since it cannot make real ones.
 - **`test/geocode.http.test.ts`** runs the online geocoder over real HTTP against
   a local Nominatim-shaped server, so timeouts, status codes and headers are
   exercised without depending on (or hammering) the public service.

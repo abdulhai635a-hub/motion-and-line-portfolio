@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Earth Studio Camera Path",
+  "version": "1.0.0",
+  "description": "Describe a camera move in any language and have the keyframes written into Google Earth Studio.",
+  "permissions": ["sidePanel", "storage", "scripting", "activeTab"],
+  "host_permissions": ["https://earth.google.com/*"],
+  "optional_host_permissions": ["https://nominatim.openstreetmap.org/*"],
+  "action": { "default_title": "Earth Studio Camera Path" },
+  "side_panel": { "default_path": "panel.html" },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://earth.google.com/studio/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

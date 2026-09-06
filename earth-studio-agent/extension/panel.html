@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Earth Studio Camera Path</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 14px;
+    font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #1f1f1f; color: #e8eaed;
+  }
+  h1 { font-size: 14px; margin: 0 0 4px; font-weight: 600; }
+  p.lede { margin: 0 0 12px; color: #9aa0a6; }
+  label { display: block; margin: 10px 0 4px; color: #9aa0a6; font-size: 12px; }
+  textarea {
+    width: 100%; min-height: 110px; resize: vertical;
+    background: #2b2b2b; color: #e8eaed; border: 1px solid #3c4043; border-radius: 6px;
+    padding: 8px; font: inherit;
+  }
+  textarea:focus, input:focus, select:focus { outline: 2px solid #8ab4f8; outline-offset: -1px; }
+  .row { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+  .row > div { flex: 1 1 70px; }
+  input[type="number"], select {
+    width: 100%; background: #2b2b2b; color: #e8eaed;
+    border: 1px solid #3c4043; border-radius: 6px; padding: 6px; font: inherit;
+  }
+  .check { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #9aa0a6; }
+  .check input { accent-color: #8ab4f8; }
+  .buttons { display: flex; gap: 8px; margin-top: 14px; }
+  button {
+    flex: 1; padding: 9px 12px; border-radius: 6px; border: 1px solid transparent;
+    font: inherit; font-weight: 500; cursor: pointer;
+  }
+  button.primary { background: #8ab4f8; color: #202124; }
+  button.secondary { background: transparent; color: #8ab4f8; border-color: #5f6368; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { margin-top: 14px; padding: 10px; border-radius: 6px; background: #2b2b2b; white-space: pre-wrap; }
+  #status.error { background: #3b1f1f; color: #f6aea9; }
+  #status.ok { background: #1e3125; color: #a8dab5; }
+  #status:empty { display: none; }
+  .bar { height: 4px; background: #3c4043; border-radius: 2px; overflow: hidden; margin-top: 8px; }
+  .bar > span { display: block; height: 100%; width: 0; background: #8ab4f8; transition: width .2s; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+  th, td { text-align: left; padding: 3px 6px 3px 0; color: #bdc1c6; }
+  th { color: #9aa0a6; font-weight: 500; border-bottom: 1px solid #3c4043; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .warn { margin-top: 10px; color: #fdd663; font-size: 12px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: #9aa0a6; font-size: 12px; }
+  .hint { color: #9aa0a6; font-size: 12px; margin-top: 6px; }
+  code { background: #2b2b2b; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+  <h1>Earth Studio Camera Path</h1>
+  <p class="lede">Describe the camera move in any language. The keyframes are written into the project you have open.</p>
+
+  <label for="command">Command</label>
+  <textarea id="command" placeholder="Start from space, zoom into Japan.&#10;Hold for 3 seconds.&#10;Then fly to Mount Fuji and zoom in close."></textarea>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="row">
+      <div><label for="fps">Frame rate</label><input id="fps" type="number" value="30" min="1" max="240"></div>
+      <div><label for="transition">Move (s)</label><input id="transition" type="number" value="4" min="0.1" step="0.1"></div>
+      <div><label for="hold">Hold (s)</label><input id="hold" type="number" value="2" min="0.1" step="0.1"></div>
+    </div>
+    <div class="row">
+      <div><label for="tilt">Tilt (deg)</label><input id="tilt" type="number" value="0" step="1"></div>
+      <div><label for="fov">Field of view</label><input id="fov" type="number" value="60" min="1" max="180"></div>
+    </div>
+    <label class="check"><input id="online" type="checkbox"> Look unknown places up on OpenStreetMap</label>
+    <p class="hint">Without this, places come from the built-in table of about 220 countries, cities and landmarks.</p>
+  </details>
+
+  <div class="buttons">
+    <button id="plan" class="secondary" type="button">Plan only</button>
+    <button id="run" class="primary" type="button">Write keyframes</button>
+  </div>
+
+  <div class="bar" id="bar" hidden><span id="barFill"></span></div>
+  <div id="status"></div>
+  <div id="details"></div>
+
+  <script src="panel.js"></script>
+</body>
+</html>
