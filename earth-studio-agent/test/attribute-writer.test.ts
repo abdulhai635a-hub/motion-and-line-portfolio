@@ -79,12 +79,14 @@ describe('writeAttribute', () => {
     const why = skip();
     if (why !== false) return t.skip(why);
     const page = await open();
-    // The field displays kilometres, so a planned 1500 m must be typed as 1.5.
+    // The field displays kilometres but its edit box holds metres, so a planned
+    // 1500 m is typed as 1500 and shows as 1.5 km. Trusting the label alone
+    // would have typed 1.5, putting the camera a metre and a half up.
     const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 1500);
 
     assert.equal(result.displayUnit, 'Kilometers');
-    assert.equal(result.metresPerEditUnit, 1000);
-    assert.equal(result.typed, 1.5);
+    assert.equal(result.metresPerEditUnit, 1);
+    assert.equal(result.typed, 1500);
     assert.equal(await shown(page, 'altitude'), '1.5');
     assert.ok(Math.abs(result.readback - 1500) < 2, `read back ${result.readback}`);
     await page.close();
@@ -94,8 +96,10 @@ describe('writeAttribute', () => {
     const why = skip();
     if (why !== false) return t.skip(why);
     const page = await open();
+    // The live failure: this was typed as 10,000,000,000 and Earth Studio
+    // clamped the camera to its ceiling.
     const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 10_000_000);
-    assert.equal(result.typed, 10_000);
+    assert.equal(result.typed, 10_000_000);
     assert.equal(await shown(page, 'altitude'), '10000');
     assert.ok(Math.abs(result.readback - 10_000_000) < 100);
     await page.close();

@@ -61,7 +61,7 @@
     <span class="title">Altitude</span>
     <span class="actions">
       <span class="value">
-        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">52043</span></span><span class="unit meters" title="Kilometers">km</span></span>
+        <span class="scrub-input valueInput" tabindex="0"><span class="presentedValueContainer"><span class="presentedValue">63170</span></span><span class="unit meters" title="Kilometers">km</span></span>
       </span>
       <button class="btn-icon add-keyframe" data-action="click:addKeyframe" data-track-value="Altitude" title-tooltip="Add keyframe"></button>
     </span>
@@ -116,14 +116,21 @@
   //
   // The full-precision text matters: it is how the driver works out whether the
   // edit box uses the same unit as the rounded display.
-  var PRECISE = {
-    longitude: '131.5689731',
-    latitude: '29.3228910257184',
-    altitude: '63170.4821',
-    rotationX: '355.7431102',
-    rotationY: '0',
-    rotationZ: '0',
-    fov: '20'
+  // One edit-box unit expressed in display units. Altitude is typed in metres
+  // and shown in kilometres; everything else shares its display unit.
+  var displayPerEdit = function (type) { return type === 'altitude' ? 0.001 : 1; };
+
+  // The exact value behind each rounded display. The edit box always opens on
+  // the current value at full precision, which is how the driver works out
+  // which unit the box is using.
+  var EXACT = {
+    longitude: 131.5689731,
+    latitude: 29.3228910257184,
+    altitude: 63170482.1,
+    rotationX: 355.7431102,
+    rotationY: 0,
+    rotationZ: 0,
+    fov: 20
   };
 
   document.querySelectorAll('.scrub-input').forEach(function (widget) {
@@ -136,7 +143,12 @@
       var box = document.createElement('div');
       box.setAttribute('contenteditable', 'true');
       box.className = 'input';
-      box.textContent = PRECISE[type] || presented.textContent;
+      box.textContent = String(EXACT[type] !== undefined ? EXACT[type] : Number(presented.textContent));
+      // While editing, Earth Studio relabels a kilometre field "Meters" - the
+      // underlying unit - even though the number beside it is still kilometres.
+      var unit = widget.querySelector('.unit');
+      var restingTitle = unit ? unit.getAttribute('title') : '';
+      if (unit && restingTitle === 'Kilometers') unit.setAttribute('title', 'Meters');
       container.appendChild(box);
       widget.classList.add('editing');
       widget.setAttribute('tabindex', '-1');
@@ -145,6 +157,7 @@
 
       var finish = function (commit) {
         var typed = Number(box.textContent);
+        if (unit && restingTitle) unit.setAttribute('title', restingTitle);
         box.remove();
         widget.classList.remove('editing');
         widget.setAttribute('tabindex', '0');
@@ -153,8 +166,10 @@
         // synchronously, so a driver that reads it immediately sees the old
         // value. The delay here is what makes that failure reproducible.
         if (commit && Number.isFinite(typed)) {
+          EXACT[type] = typed;
+          var factor = displayPerEdit(type);
           setTimeout(function () {
-            presented.textContent = String(Math.round(typed * 1000) / 1000);
+            presented.textContent = String(Math.round(typed * factor * 1000) / 1000);
           }, window.__commitDelay || 150);
         }
       };

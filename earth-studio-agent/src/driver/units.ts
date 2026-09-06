@@ -24,24 +24,44 @@ export function metresPerDisplayUnit(unitTitle: string): number {
 }
 
 /**
- * Metres represented by one unit of the edit box, worked out by comparing the
- * edit box's own text with the rounded value shown beside it.
+ * Metres represented by one unit of the edit box.
  *
- * `displayed` and `editBox` are the two numbers as read from the page;
- * `unitTitle` is the unit label's tooltip, e.g. "Kilometers".
+ * The two numbers on screen describe the same quantity: the rounded value with
+ * its unit, and the full-precision value in the edit box. So if one display
+ * unit is `perDisplay` metres,
+ *
+ *     displayed x perDisplay  =  editBox x (metres per edit unit)
+ *
+ * and the answer falls out. The result is snapped to a power of ten, because
+ * the only real cases are the same unit or a metre/kilometre swap, and the two
+ * readings differ slightly through rounding.
+ *
+ * Deriving it rather than assuming matters: Earth Studio labels the altitude
+ * "Kilometers" at rest but "Meters" while the edit box is open, and a live run
+ * that trusted the label typed a thousand times the intended altitude.
  */
 export function metresPerEditUnit(unitTitle: string, displayed: number, editBox: number): number {
   const perDisplay = metresPerDisplayUnit(unitTitle);
-  if (!Number.isFinite(displayed) || !Number.isFinite(editBox) || displayed === 0) {
-    // Nothing to compare against: the edit box almost certainly matches the
-    // display, which is what Earth Studio was observed to do for latitude.
+  if (!Number.isFinite(displayed) || !Number.isFinite(editBox) || displayed === 0 || editBox === 0) {
+    // Nothing to compare against; the edit box almost certainly matches the display.
     return perDisplay;
   }
-  const ratio = Math.abs(editBox / displayed);
-  if (ratio >= 0.5 && ratio <= 2) return perDisplay;
-  if (ratio >= 500 && ratio <= 2000) return perDisplay / 1000;
-  if (ratio >= 1 / 2000 && ratio <= 1 / 500) return perDisplay * 1000;
-  return perDisplay;
+  const raw = Math.abs((displayed * perDisplay) / editBox);
+  if (!Number.isFinite(raw) || raw <= 0) return perDisplay;
+
+  const snapped = 10 ** Math.round(Math.log10(raw));
+  // Only trust the snap when the two readings really are the same quantity;
+  // otherwise the display unit is the safer assumption.
+  // The two readings describe the same quantity and differ only by display
+  // rounding, so a real swap lands within a whisker of a power of ten. Half a
+  // decade of slack would accept ratios that mean something else entirely.
+  if (raw / snapped > 1.2 || snapped / raw > 1.2) return perDisplay;
+  // A real unit swap is a metre/kilometre one at most. A wilder factor means
+  // the two numbers are not the same quantity - a stale readout, say - and
+  // acting on it would be worse than assuming the display unit.
+  const swing = snapped / perDisplay;
+  if (swing < 1e-3 || swing > 1e3) return perDisplay;
+  return snapped;
 }
 
 /** Parses a number as the page prints it, e.g. "63,170.48" or "-15.018". */

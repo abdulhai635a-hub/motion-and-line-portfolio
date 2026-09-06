@@ -144,9 +144,13 @@ export async function writeAttribute(
   const opened = await readRow(page, target);
   const displayed = parseDisplayedNumber(before.displayed);
   const editBoxValue = parseDisplayedNumber(opened.editBox ?? '');
-  const perDisplay = metresPerDisplayUnit(opened.unitTitle);
+  // The unit label read BEFORE the click. Earth Studio relabels the altitude
+  // "Meters" while its edit box is open even though the number on screen is
+  // still kilometres; pairing the two describes a quantity that does not exist,
+  // and a live run that did so typed a thousand times the intended altitude.
+  const perDisplay = metresPerDisplayUnit(before.unitTitle);
   const perEdit =
-    target.plannedUnit === 'metres' ? metresPerEditUnit(opened.unitTitle, displayed, editBoxValue) : 1;
+    target.plannedUnit === 'metres' ? metresPerEditUnit(before.unitTitle, displayed, editBoxValue) : 1;
 
   const typed = target.plannedUnit === 'metres' ? planned / perEdit : planned;
 
@@ -176,7 +180,8 @@ export async function writeAttribute(
   if (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance) {
     throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field did not take ${planned}.`, {
       detail:
-        `Typed ${formatForField(typed)} into a field reading in ${opened.unitTitle || 'unknown units'}; ` +
+        `Typed ${formatForField(typed)} into a field reading in ${before.unitTitle || 'unknown units'} ` +
+        `(one edit-box unit = ${perEdit} m); ` +
         `after ${settleTimeoutMs}ms it still shows "${after.displayed}", which is ${readback} ` +
         `against the ${planned} that was wanted.`,
       hint: `Selector used: ${widget}`,
@@ -192,7 +197,7 @@ export async function writeAttribute(
     attributeType: target.attributeType,
     planned,
     typed,
-    displayUnit: opened.unitTitle,
+    displayUnit: before.unitTitle,
     metresPerEditUnit: perEdit,
     readback,
     keyframed,

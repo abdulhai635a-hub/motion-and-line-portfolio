@@ -104,10 +104,12 @@ describe('driver against a real browser', () => {
     const { path } = await planCameraPath('fly to Mount Fuji and zoom in close');
     const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
 
-    // The plan asks for 1500 m; the field reads in kilometres, so it must show 1.5.
+    // The plan asks for 1500 m. The field reads in kilometres but its edit box
+    // holds metres, so 1500 is typed and 1.5 appears on screen.
     const altitude = report.results.at(-1)?.details.find((detail) => detail.attributeType === 'altitude');
     assert.equal(altitude?.planned, 1500);
-    assert.equal(altitude?.typed, 1.5);
+    assert.equal(altitude?.typed, 1500);
+    assert.equal(altitude?.metresPerEditUnit, 1);
     assert.equal(altitude?.displayUnit, 'Kilometers');
 
     const added = await recorded(page);
