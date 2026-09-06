@@ -75,7 +75,7 @@ export function renderLayoutReport(report: LayoutReport): string {
   ];
   for (const field of report.fields) {
     const status = field.matched === null ? (field.required ? 'MISSING ' : 'absent  ') : 'ok      ';
-    const detail = field.matched ?? `tried ${field.candidates.length} candidates`;
+    const detail = field.matched ?? field.note ?? `tried ${field.candidates.length} candidates`;
     lines.push(`  ${status}${field.label.padEnd(22)} ${detail}`);
   }
   return lines.join('\n');

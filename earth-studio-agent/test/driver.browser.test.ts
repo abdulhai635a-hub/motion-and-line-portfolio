@@ -179,6 +179,59 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
+  test('an attribute present but not shown is skipped, not clicked at', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    // Exactly what the live project did with Roll: the row is in the DOM but
+    // was never added to the timeline, so it renders to nothing. Clicking it
+    // hung until the timeout and failed the whole run.
+    await page.addStyleTag({ content: '[data-attribute-type="rotationZ"] { display: none !important; }' });
+
+    const { path } = await planCameraPath('fly to Rome');
+    const started = Date.now();
+    const report = await new EarthStudioDriver(page as unknown as PageLike).applyPath(path);
+
+    assert.equal(report.failures.length, 0);
+    assert.ok(report.results[0]?.skipped.includes('roll'));
+    // It must be skipped outright, not waited on.
+    assert.ok(Date.now() - started < 20_000, 'the hidden row should not be waited for');
+    await page.close();
+  });
+
+  test('a required attribute that is present but hidden is a clear failure', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    await page.addStyleTag({ content: '[data-attribute-type="altitude"] { display: none !important; }' });
+
+    const { path } = await planCameraPath('fly to Rome');
+    await assert.rejects(
+      () => new EarthStudioDriver(page as unknown as PageLike).applyPath(path),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_LAYOUT_MISMATCH');
+        assert.match(error.detail ?? '', /camera altitude/);
+        return true;
+      },
+    );
+    await page.close();
+  });
+
+  test('the layout report says when a field is there but not shown', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    await page.addStyleTag({ content: '[data-attribute-type="rotationZ"] { display: none !important; }' });
+
+    const report = await new EarthStudioDriver(page as unknown as PageLike).verifyLayout();
+    assert.equal(report.ok, true, 'an optional hidden field must not fail the check');
+    const roll = report.fields.find((field) => field.name === 'roll');
+    assert.equal(roll?.matched, null);
+    assert.equal(roll?.note, 'on the page but not shown');
+    await page.close();
+  });
+
   test('a missing required row stops the run before anything is written', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);

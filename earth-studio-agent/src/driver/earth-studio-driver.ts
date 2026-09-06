@@ -59,6 +59,8 @@ export interface FieldReport {
   required: boolean;
   /** The selector that matched, or null when none did. */
   matched: string | null;
+  /** Why a present-but-unusable field was not counted. */
+  note?: string;
   candidates: string[];
 }
 
@@ -137,12 +139,16 @@ export class EarthStudioDriver {
     for (const name of CAMERA_FIELD_ORDER) {
       const attribute = this.selectors.camera[name];
       const selector = widgetSelector(attribute);
-      const matched = (await this.exists(selector)) ? selector : null;
+      // Presence is not enough. An attribute a project has not put on its
+      // timeline is still in the DOM but renders to nothing, and reporting it
+      // as found sends the driver off to click something invisible.
+      const usable = await this.isUsable(selector);
       fields.push({
         name,
         label: attribute.label,
         required: attribute.required,
-        matched,
+        matched: usable ? selector : null,
+        note: !usable && (await this.exists(selector)) ? 'on the page but not shown' : undefined,
         candidates: [selector],
       });
     }
@@ -219,13 +225,16 @@ export class EarthStudioDriver {
 
     for (const name of CAMERA_FIELD_ORDER) {
       const attribute = this.selectors.camera[name];
-      if (!(await this.exists(widgetSelector(attribute)))) {
+      if (!(await this.isUsable(widgetSelector(attribute)))) {
         if (attribute.required) {
-          throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${attribute.label} row is not on the page.`, {
+          throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${attribute.label} row cannot be edited.`, {
             stepIndex: keyframe.stepIndex,
-            detail: `Looked for ${widgetSelector(attribute)}`,
+            detail: `${widgetSelector(attribute)} is ${(await this.exists(widgetSelector(attribute))) ? 'on the page but not shown' : 'not on the page'}.`,
+            hint: 'Open the Camera Position group in Earth Studio so its fields are visible.',
           });
         }
+        // An attribute this project has not added to its timeline, such as Roll
+        // or Field of View. The camera path does not need it.
         skipped.push(name);
         continue;
       }
@@ -259,6 +268,21 @@ export class EarthStudioDriver {
   private async exists(selector: string): Promise<boolean> {
     const handle = await this.page.$(selector);
     return handle !== null && handle !== undefined;
+  }
+
+  /** Present, rendered and clickable - not merely in the DOM. */
+  private async isUsable(selector: string): Promise<boolean> {
+    if (typeof this.page.evaluate !== 'function') return this.exists(selector);
+    return this.page.evaluate<boolean>(
+      new Function(`
+        const node = document.querySelector(${JSON.stringify(selector)});
+        if (node === null) return false;
+        const rect = node.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return false;
+        const style = window.getComputedStyle(node);
+        return style.visibility !== 'hidden' && style.display !== 'none';
+      `) as () => boolean,
+    );
   }
 }
 
