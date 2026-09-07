@@ -2249,12 +2249,34 @@
   }
 
   // src/extension/dom-page.ts
-  var DomPage = class {
+  var DomPage = class _DomPage {
     doc;
     defaultTimeout;
+    input;
     constructor(options = {}) {
       this.doc = options.document ?? globalThis.document;
       this.defaultTimeout = options.timeoutMs ?? 1e4;
+      this.input = options.input;
+    }
+    /** The real-input channel, if it answered yes. */
+    async realInput() {
+      if (this.input === void 0) return void 0;
+      try {
+        return await this.input.available() ? this.input : void 0;
+      } catch {
+        return void 0;
+      }
+    }
+    /** Where a mouse would land on an element, after bringing it into view. */
+    static point(element) {
+      element.scrollIntoView?.({ block: "center", inline: "center" });
+      const box = element.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) return null;
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    }
+    /** Lets go of anything held for the sake of real input. */
+    async release() {
+      await this.input?.release().catch(() => void 0);
     }
     /** There is nothing to navigate: the script is already on the page. */
     async goto() {
@@ -2271,6 +2293,12 @@
     async click(selector, options = {}) {
       const element = await this.wait(selector, options.timeout ?? this.defaultTimeout);
       if (element === null) throw new Error(`Timed out waiting for ${selector}`);
+      const input = await this.realInput();
+      const at = input === void 0 ? null : _DomPage.point(element);
+      if (input !== void 0 && at !== null) {
+        await input.click(at.x, at.y);
+        return;
+      }
       dispatchClick(element);
     }
     async hover(selector, options = {}) {
@@ -2293,6 +2321,11 @@
       const editable = element;
       editable.focus();
       selectAll(editable);
+      const input = await this.realInput();
+      if (input !== void 0) {
+        await input.type(value);
+        return;
+      }
       editable.textContent = value;
       placeCaretAtEnd(editable);
       editable.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
@@ -2307,6 +2340,11 @@
       const element = await this.wait(selector, options.timeout ?? this.defaultTimeout);
       if (element === null) throw new Error(`Timed out waiting for ${selector}`);
       element.focus?.();
+      const input = await this.realInput();
+      if (input !== void 0) {
+        await input.key(key);
+        return;
+      }
       sendKey(element, key);
     }
     /** Runs a function against this document. There is nothing to serialise. */
@@ -2315,9 +2353,19 @@
     }
     keyboard = {
       press: async (key) => {
+        const input = await this.realInput();
+        if (input !== void 0) {
+          await input.key(key);
+          return;
+        }
         sendKey(this.doc.activeElement ?? this.doc.body, key);
       },
       type: async (text) => {
+        const input = await this.realInput();
+        if (input !== void 0) {
+          await input.type(text);
+          return;
+        }
         const target = this.doc.activeElement;
         if (target === null) return;
         if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -2496,7 +2544,7 @@
       warnings.push({ code: "CLAUSE_IGNORED", message: `Could not interpret "${clause}"; it was left out.` });
     }
     const path = buildTimeline(resolved.steps, config, translation.english, warnings);
-    const page = new DomPage();
+    const page = new DomPage({ input: options.input });
     const driver = new EarthStudioDriver(page, {
       onProgress: (event) => {
         if (event.kind !== "keyframe") return;
@@ -2520,10 +2568,50 @@
       notify({ stage: "done", message: `Planned ${path.keyframes.length} keyframes; nothing was written` });
       return { translation, path, layout, warnings: path.warnings };
     }
+    const realInput = options.input === void 0 ? false : await options.input.available().catch(() => false);
+    if (!realInput) {
+      path.warnings.push({
+        code: "NO_REAL_INPUT",
+        message: 'Chrome is not letting the extension send real input, so scripted events are all that is left - Earth Studio usually ignores those. Reload the extension, and leave the "started debugging this browser" banner alone while the run is going.'
+      });
+    }
     notify({ stage: "writing", message: `Writing ${path.keyframes.length} keyframes`, fraction: 0 });
-    const report = await driver.applyPath(path);
-    notify({ stage: "done", message: `Wrote ${report.applied} of ${report.total} keyframes`, fraction: 1 });
-    return { translation, path, layout, report, warnings: path.warnings };
+    try {
+      const report = await driver.applyPath(path);
+      notify({ stage: "done", message: `Wrote ${report.applied} of ${report.total} keyframes`, fraction: 1 });
+      return { translation, path, layout, report, warnings: path.warnings };
+    } finally {
+      await page.release();
+    }
+  }
+
+  // src/extension/trusted-input.ts
+  function extensionInput(runtime) {
+    let usable;
+    const ask = (message) => new Promise((resolve, reject) => {
+      runtime.sendMessage({ type: "input", ...message }, (response) => {
+        const failed = runtime.lastError;
+        if (failed !== void 0) return reject(new Error(failed.message));
+        if (response?.ok !== true) return reject(new Error(response?.error ?? "The extension gave no answer."));
+        resolve();
+      });
+    });
+    return {
+      async available() {
+        if (usable !== void 0) return usable;
+        try {
+          await ask({ action: "probe" });
+          usable = true;
+        } catch {
+          usable = false;
+        }
+        return usable;
+      },
+      click: (x, y) => ask({ action: "click", x, y }),
+      key: (key) => ask({ action: "key", key }),
+      type: (text) => ask({ action: "text", text }),
+      release: () => ask({ action: "release" }).catch(() => void 0)
+    };
   }
 
   // src/extension/content.ts
@@ -2539,6 +2627,9 @@
     const options = withTranslator(message.options ?? {});
     runCommandInPage(message.command ?? "", {
       ...options,
+      // Real browser input, sent by the service worker. Earth Studio's fields
+      // ignore anything a script dispatches itself.
+      input: extensionInput(chrome.runtime),
       onProgress: (progress) => chrome.runtime.sendMessage({ type: "progress", progress })
     }).then((result) => {
       sendResponse({

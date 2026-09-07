@@ -387,6 +387,91 @@ describe('running inside the page, as the extension does', () => {
     await page.close();
   });
 
+  test('drives through real browser input when the extension can get it', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    // Earth Studio ignores events made in JavaScript, so the extension asks its
+    // service worker to deliver real ones through Chrome. That channel cannot
+    // be attached from a test, but everything the page side decides can be: the
+    // point a click is aimed at, the order, and that the channel is released.
+    // The stand-in below delivers at those coordinates, so a wrong point lands
+    // on the wrong element and the run fails.
+    const page = await openStudio({ openOn: 'channel' });
+    const result = await page.evaluate(async () => {
+      const calls: string[] = [];
+      const input = {
+        available: async () => true,
+        click: async (x: number, y: number) => {
+          calls.push(`click ${Math.round(x)},${Math.round(y)}`);
+          const under = document.elementFromPoint(x, y) as HTMLElement | null;
+          if (under === null) throw new Error(`nothing at ${x},${y}`);
+          under.dispatchEvent(new CustomEvent('agenttestclick', { bubbles: true }));
+          under.click();
+        },
+        key: async (key: string) => {
+          calls.push(`key ${key}`);
+          const target = document.activeElement ?? document.body;
+          const name = key.split('+').pop() ?? key;
+          const init = { key: name, bubbles: true, cancelable: true, shiftKey: key.includes('Shift') };
+          target.dispatchEvent(new KeyboardEvent('keydown', init));
+          target.dispatchEvent(new KeyboardEvent('keyup', init));
+        },
+        type: async (text: string) => {
+          calls.push(`type ${text}`);
+          document.execCommand('insertText', false, text);
+        },
+        release: async () => {
+          calls.push('release');
+        },
+      };
+
+      const api = (window as unknown as {
+        EarthStudioAgent: { runCommandInPage(command: string, options: unknown): Promise<{ report?: { applied: number; total: number } }> };
+      }).EarthStudioAgent;
+      const run = await api.runCommandInPage('fly to Rome. hold 2 seconds', { input });
+      return { applied: run.report?.applied ?? 0, total: run.report?.total ?? 0, calls };
+    });
+
+    assert.equal(result.applied, result.total);
+    assert.ok(result.applied >= 3, `wrote ${result.applied}`);
+    // The fixture's fields open for nothing a script dispatches, so every one
+    // of these had to arrive through the input channel.
+    assert.ok(result.calls.some((call) => call.startsWith('click ')), 'no click went through the channel');
+    assert.ok(result.calls.some((call) => call.startsWith('type ')), 'no text went through the channel');
+    assert.equal(result.calls.at(-1), 'release', 'the debugger must be let go at the end');
+    await page.close();
+  });
+
+  test('says so when Chrome will not give it real input', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    // The failure this warns about is silent otherwise: the fields simply
+    // ignore everything, and the run dies on the first one.
+    const page = await openStudio();
+    const warnings = await page.evaluate(async () => {
+      const api = (window as unknown as {
+        EarthStudioAgent: {
+          runCommandInPage(command: string, options: unknown): Promise<{ warnings: Array<{ code: string; message: string }> }>;
+        };
+      }).EarthStudioAgent;
+      const run = await api.runCommandInPage('fly to Rome', {
+        input: {
+          available: async () => false,
+          click: async () => undefined,
+          key: async () => undefined,
+          type: async () => undefined,
+          release: async () => undefined,
+        },
+      });
+      return run.warnings;
+    });
+
+    const warning = warnings.find((entry) => entry.code === 'NO_REAL_INPUT');
+    assert.ok(warning, `no warning about input: ${JSON.stringify(warnings)}`);
+    assert.match(warning.message, /started debugging this browser/);
+    await page.close();
+  });
+
   test('a dry run plans without touching the project', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

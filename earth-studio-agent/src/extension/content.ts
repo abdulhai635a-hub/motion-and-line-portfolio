@@ -6,6 +6,7 @@
  * a command from the panel, run it, and stream progress back.
  */
 import { runCommandInPage, type ProgressReport, type RunOptions } from './run-in-page.ts';
+import { extensionInput } from './trusted-input.ts';
 import { isAgentError } from '../errors.ts';
 
 interface RuntimeMessage {
@@ -20,7 +21,8 @@ interface ChromeRuntime {
       handler: (message: RuntimeMessage, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void,
     ): void;
   };
-  sendMessage(message: unknown): void;
+  sendMessage(message: unknown, callback?: (response: { ok?: boolean; error?: string } | undefined) => void): void;
+  lastError?: { message: string };
 }
 
 declare const chrome: { runtime: ChromeRuntime };
@@ -41,6 +43,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const options = withTranslator(message.options ?? {});
   runCommandInPage(message.command ?? '', {
     ...options,
+    // Real browser input, sent by the service worker. Earth Studio's fields
+    // ignore anything a script dispatches itself.
+    input: extensionInput(chrome.runtime),
     onProgress: (progress: ProgressReport) => chrome.runtime.sendMessage({ type: 'progress', progress }),
   })
     .then((result) => {

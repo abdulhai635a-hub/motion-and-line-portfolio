@@ -146,6 +146,8 @@
   //   'click'    - a click event, as the live editor behaves
   //   'mouse'    - only a mousedown/mouseup pair counts, click alone does not
   //   'dblclick' - only a double click opens the box
+  //   'channel'  - only input delivered by the browser, never a scripted event
+  //   'never'    - nothing opens it, for the failure message
   // window.__pointerCaptureThrows makes pointerdown throw the way a real
   // setPointerCapture does when handed a pointerId no real pointer owns, which
   // kills the rest of the handler with it.
@@ -171,6 +173,12 @@
     });
     widget.addEventListener('click', function () {
       if (window.__openOn === 'click') open();
+    });
+    // 'channel' stands in for a field that opens for input delivered by the
+    // browser and for nothing a script can dispatch itself - which is how the
+    // live editor behaves, and why the extension asks Chrome to send the input.
+    widget.addEventListener('agenttestclick', function () {
+      if (window.__openOn === 'channel') open();
     });
 
     function open() {

@@ -18,21 +18,53 @@
  *     keyframe button that renders to nothing.
  */
 import type { PageLike } from '../driver/page.ts';
+import type { TrustedInput } from './trusted-input.ts';
 
 export interface DomPageOptions {
   /** Document to work on. Defaults to the ambient one. */
   document?: Document;
   /** Default timeout for waits, in milliseconds. */
   timeoutMs?: number;
+  /**
+   * Real browser input, when the extension can get it. Earth Studio's value
+   * fields ignore events made in JavaScript, so this is what actually opens
+   * them; without it the synthetic gestures below are all there is.
+   */
+  input?: TrustedInput;
 }
 
 export class DomPage implements PageLike {
   private readonly doc: Document;
   private readonly defaultTimeout: number;
+  private readonly input: TrustedInput | undefined;
 
   constructor(options: DomPageOptions = {}) {
     this.doc = options.document ?? globalThis.document;
     this.defaultTimeout = options.timeoutMs ?? 10_000;
+    this.input = options.input;
+  }
+
+  /** The real-input channel, if it answered yes. */
+  private async realInput(): Promise<TrustedInput | undefined> {
+    if (this.input === undefined) return undefined;
+    try {
+      return (await this.input.available()) ? this.input : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Where a mouse would land on an element, after bringing it into view. */
+  private static point(element: Element): { x: number; y: number } | null {
+    element.scrollIntoView?.({ block: 'center', inline: 'center' });
+    const box = element.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return null;
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  }
+
+  /** Lets go of anything held for the sake of real input. */
+  async release(): Promise<void> {
+    await this.input?.release().catch(() => undefined);
   }
 
   /** There is nothing to navigate: the script is already on the page. */
@@ -53,6 +85,12 @@ export class DomPage implements PageLike {
   async click(selector: string, options: { timeout?: number } = {}): Promise<void> {
     const element = await this.wait(selector, options.timeout ?? this.defaultTimeout);
     if (element === null) throw new Error(`Timed out waiting for ${selector}`);
+    const input = await this.realInput();
+    const at = input === undefined ? null : DomPage.point(element);
+    if (input !== undefined && at !== null) {
+      await input.click(at.x, at.y);
+      return;
+    }
     dispatchClick(element);
   }
 
@@ -76,10 +114,17 @@ export class DomPage implements PageLike {
       return;
     }
 
-    // A contenteditable, which is what Earth Studio opens over a value.
+    // A contenteditable, which is what Earth Studio opens over a value. With
+    // real input the text is inserted over the selection by the browser, the
+    // same way a paste is, so the app's own handlers see it.
     const editable = element as HTMLElement;
     editable.focus();
     selectAll(editable);
+    const input = await this.realInput();
+    if (input !== undefined) {
+      await input.type(value);
+      return;
+    }
     editable.textContent = value;
     placeCaretAtEnd(editable);
     editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
@@ -96,6 +141,11 @@ export class DomPage implements PageLike {
     const element = await this.wait(selector, options.timeout ?? this.defaultTimeout);
     if (element === null) throw new Error(`Timed out waiting for ${selector}`);
     (element as HTMLElement).focus?.();
+    const input = await this.realInput();
+    if (input !== undefined) {
+      await input.key(key);
+      return;
+    }
     sendKey(element, key);
   }
 
@@ -106,9 +156,19 @@ export class DomPage implements PageLike {
 
   readonly keyboard = {
     press: async (key: string): Promise<void> => {
+      const input = await this.realInput();
+      if (input !== undefined) {
+        await input.key(key);
+        return;
+      }
       sendKey(this.doc.activeElement ?? this.doc.body, key);
     },
     type: async (text: string): Promise<void> => {
+      const input = await this.realInput();
+      if (input !== undefined) {
+        await input.type(text);
+        return;
+      }
       const target = this.doc.activeElement;
       if (target === null) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {

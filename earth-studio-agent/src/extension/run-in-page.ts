@@ -15,6 +15,7 @@ import { Geocoder, createNominatimProvider, offlineProvider } from '../geocode/i
 import { EarthStudioDriver, type DriveReport, type LayoutReport } from '../driver/earth-studio-driver.ts';
 import { AgentError } from '../errors.ts';
 import { DomPage } from './dom-page.ts';
+import type { TrustedInput } from './trusted-input.ts';
 import { toEnglish, type TranslateOptions, type TranslationResult } from './language.ts';
 
 export interface RunOptions {
@@ -26,6 +27,11 @@ export interface RunOptions {
   onProgress?: (event: ProgressReport) => void;
   /** Plan only: work out the keyframes but write nothing. */
   dryRun?: boolean;
+  /**
+   * Real browser input. Earth Studio ignores events made in JavaScript, so
+   * without this the writing half cannot open a field at all.
+   */
+  input?: TrustedInput;
 }
 
 export interface ProgressReport {
@@ -64,7 +70,7 @@ export async function runCommandInPage(command: string, options: RunOptions = {}
   }
   const path = buildTimeline(resolved.steps, config, translation.english, warnings);
 
-  const page = new DomPage();
+  const page = new DomPage({ input: options.input });
   const driver = new EarthStudioDriver(page, {
     onProgress: (event) => {
       if (event.kind !== 'keyframe') return;
@@ -91,11 +97,29 @@ export async function runCommandInPage(command: string, options: RunOptions = {}
     return { translation, path, layout, warnings: path.warnings };
   }
 
-  notify({ stage: 'writing', message: `Writing ${path.keyframes.length} keyframes`, fraction: 0 });
-  const report = await driver.applyPath(path);
-  notify({ stage: 'done', message: `Wrote ${report.applied} of ${report.total} keyframes`, fraction: 1 });
+  // Say so before writing rather than after failing: without real input the
+  // fields below are very likely to ignore everything the driver does.
+  const realInput = options.input === undefined ? false : await options.input.available().catch(() => false);
+  if (!realInput) {
+    path.warnings.push({
+      code: 'NO_REAL_INPUT',
+      message:
+        'Chrome is not letting the extension send real input, so scripted events are all that is left - ' +
+        'Earth Studio usually ignores those. Reload the extension, and leave the "started debugging this ' +
+        'browser" banner alone while the run is going.',
+    });
+  }
 
-  return { translation, path, layout, report, warnings: path.warnings };
+  notify({ stage: 'writing', message: `Writing ${path.keyframes.length} keyframes`, fraction: 0 });
+  try {
+    const report = await driver.applyPath(path);
+    notify({ stage: 'done', message: `Wrote ${report.applied} of ${report.total} keyframes`, fraction: 1 });
+    return { translation, path, layout, report, warnings: path.warnings };
+  } finally {
+    // Whatever happened, let go of the debugger: its banner should not outlive
+    // the run it belongs to.
+    await page.release();
+  }
 }
 
 export type { GeoPlace };
