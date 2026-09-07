@@ -1621,16 +1621,7 @@
         hint: 'Run "earth-studio-agent probe" to list the attribute rows this project actually shows.'
       });
     }
-    try {
-      await page.click(widget, { timeout: timeoutMs });
-      await page.waitForSelector(`${widget} [contenteditable]`, { timeout: timeoutMs });
-    } catch (cause) {
-      throw new AgentError("DRIVER_FIELD_WRITE_FAILED", `The ${target.label} field did not open for editing.`, {
-        detail: cause instanceof Error ? cause.message : String(cause),
-        hint: `Selector used: ${widget}`,
-        cause
-      });
-    }
+    await openEditor(page, widget, target.label, timeoutMs);
     const opened = await readRow(page, target);
     const displayed = parseDisplayedNumber(before.displayed);
     const editBoxValue = parseDisplayedNumber(opened.editBox ?? "");
@@ -1768,6 +1759,123 @@
     if (!Number.isFinite(value)) return "0";
     if (Number.isInteger(value)) return value.toLocaleString("fullwide", { useGrouping: false, maximumFractionDigits: 0 });
     return value.toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  var GESTURES = ["click", "pointer", "mouse", "native", "dblclick"];
+  async function openEditor(page, widget, label, timeoutMs) {
+    const edit = `${widget} [contenteditable]`;
+    const tried = [];
+    let lastError;
+    let budget = timeoutMs;
+    for (const gesture of GESTURES) {
+      if (await isOpen(page, edit)) return;
+      tried.push(gesture);
+      try {
+        if (gesture === "click") await page.click?.(widget, { timeout: timeoutMs });
+        else await gestureAt(page, widget, gesture);
+      } catch (cause) {
+        lastError = cause;
+      }
+      if (await waitOpen(page, edit, budget)) return;
+      budget = 1200;
+    }
+    throw new AgentError("DRIVER_FIELD_WRITE_FAILED", `The ${label} field did not open for editing.`, {
+      detail: `Tried ${tried.join(", ")} on ${widget}` + (lastError instanceof Error ? `; last error: ${lastError.message.split("\n")[0]}` : ""),
+      // The field as it stands after all that. Without a terminal - which is the
+      // whole point of the extension - this is the only way to see what the
+      // editor actually did, so it goes in the message rather than a log.
+      hint: `The field now reads: ${await describeWidget(page, widget)}`,
+      cause: lastError
+    });
+  }
+  async function describeWidget(page, widget) {
+    if (typeof page.evaluate !== "function") return widget;
+    try {
+      return await page.evaluate((selector) => {
+        const node = document.querySelector(selector);
+        if (node === null) return "not on the page at all";
+        const box = node.getBoundingClientRect();
+        return `<${node.tagName.toLowerCase()} class="${node.className}"> ${Math.round(box.width)}x${Math.round(box.height)} at ${Math.round(box.left)},${Math.round(box.top)}, text "${(node.textContent ?? "").trim().slice(0, 40)}"`;
+      }, widget);
+    } catch {
+      return widget;
+    }
+  }
+  async function isOpen(page, edit) {
+    if (typeof page.evaluate !== "function") return false;
+    return page.evaluate((selector) => {
+      const node = document.querySelector(selector);
+      if (node === null) return false;
+      const box = node.getBoundingClientRect();
+      return box.width > 0 || box.height > 0;
+    }, edit);
+  }
+  async function waitOpen(page, edit, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    do {
+      if (await isOpen(page, edit)) return true;
+      await new Promise((done) => setTimeout(done, 80));
+    } while (Date.now() < deadline);
+    return false;
+  }
+  async function gestureAt(page, selector, kind) {
+    if (typeof page.evaluate !== "function") return;
+    await page.evaluate((input) => {
+      const element = document.querySelector(input.selector);
+      if (element === null) return;
+      element.scrollIntoView?.({ block: "center", inline: "center" });
+      const box = element.getBoundingClientRect();
+      const x = box.left + box.width / 2;
+      const y = box.top + box.height / 2;
+      const under = document.elementFromPoint(x, y);
+      const target = under !== null && element.contains(under) ? under : element;
+      const fire = (type, extra) => {
+        const init = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          screenX: x,
+          screenY: y,
+          button: 0,
+          detail: 1,
+          ...extra
+        };
+        const pointer = type.startsWith("pointer") && typeof PointerEvent === "function";
+        target.dispatchEvent(
+          pointer ? new PointerEvent(type, { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true, width: 1, height: 1 }) : new MouseEvent(type, init)
+        );
+      };
+      if (input.kind === "native") {
+        target.click();
+        return;
+      }
+      if (input.kind === "dblclick") {
+        for (const detail of [1, 2]) {
+          fire("mousedown", { buttons: 1, detail });
+          fire("mouseup", { buttons: 0, detail });
+          fire("click", { detail });
+        }
+        fire("dblclick", { detail: 2 });
+        return;
+      }
+      const usePointer = input.kind === "pointer";
+      if (usePointer) {
+        fire("pointerover", { buttons: 0 });
+        fire("pointerenter", { buttons: 0 });
+      }
+      fire("mouseover", { buttons: 0 });
+      fire("mouseenter", { buttons: 0 });
+      if (usePointer) fire("pointermove", { buttons: 0 });
+      fire("mousemove", { buttons: 0 });
+      if (usePointer) fire("pointerdown", { buttons: 1, pressure: 0.5 });
+      fire("mousedown", { buttons: 1 });
+      target.closest("[tabindex]")?.focus?.();
+      if (usePointer) fire("pointerup", { buttons: 0 });
+      fire("mouseup", { buttons: 0 });
+      fire("click", {});
+    }, { selector, kind });
   }
 
   // src/driver/playhead.ts

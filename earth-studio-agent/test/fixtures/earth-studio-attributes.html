@@ -140,8 +140,40 @@
     fov: 20
   };
 
+  // How this project's value fields decide a click has happened. The live app
+  // opens on a plain click; tests set window.__openOn to stand in for the two
+  // ways a synthetic click can miss one that does not.
+  //   'click'    - a click event, as the live editor behaves
+  //   'mouse'    - only a mousedown/mouseup pair counts, click alone does not
+  //   'dblclick' - only a double click opens the box
+  // window.__pointerCaptureThrows makes pointerdown throw the way a real
+  // setPointerCapture does when handed a pointerId no real pointer owns, which
+  // kills the rest of the handler with it.
+  window.__openOn = 'click';
+  window.__pointerCaptureThrows = false;
+
   document.querySelectorAll('.scrub-input').forEach(function (widget) {
+    var pressed = false;
+    widget.addEventListener('pointerdown', function (event) {
+      if (window.__pointerCaptureThrows) {
+        // Same shape as the real failure: the handler throws before it can do
+        // anything else, so nothing downstream of it ever runs.
+        throw new DOMException('No active pointer with the given id', 'NotFoundError');
+      }
+    });
+    widget.addEventListener('mousedown', function () { pressed = true; });
+    widget.addEventListener('mouseup', function () {
+      if (pressed && window.__openOn === 'mouse') open();
+      pressed = false;
+    });
+    widget.addEventListener('dblclick', function () {
+      if (window.__openOn === 'dblclick') open();
+    });
     widget.addEventListener('click', function () {
+      if (window.__openOn === 'click') open();
+    });
+
+    function open() {
       if (widget.querySelector('[contenteditable]')) return;
       var row = widget.closest('[data-attribute-type]');
       var type = row ? row.getAttribute('data-attribute-type') : '';
@@ -197,7 +229,7 @@
         if (event.key === 'Escape') { event.preventDefault(); finish(false); }
         if (event.key === 'Enter') { event.preventDefault(); finish(true); }
       });
-    });
+    }
   });
 
   // The timecode readout: clicking cycles its display format, as the live one
@@ -222,7 +254,7 @@
   readout.addEventListener('click', function () { format = (format + 1) % FORMATS.length; draw(); });
   window.__frame = function () { return frame; };
   // The transport buttons the live editor shows beside the readout.
-  var move = function (delta) { frame = Math.max(0, Math.min(450, frame + delta)); setTimeout(draw, 30); };
+  var move = function (delta) { frame = Math.max(0, Math.min(window.__lastFrame || LAST_FRAME, frame + delta)); setTimeout(draw, 30); };
   var bind = function (action, handler) {
     var node = document.querySelector('[data-action="' + action + '"]');
     if (node) node.addEventListener('click', handler);

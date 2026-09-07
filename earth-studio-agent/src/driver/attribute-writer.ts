@@ -130,17 +130,7 @@ export async function writeAttribute(
     });
   }
 
-  // Open the edit box.
-  try {
-    await page.click(widget, { timeout: timeoutMs });
-    await page.waitForSelector(`${widget} [contenteditable]`, { timeout: timeoutMs });
-  } catch (cause) {
-    throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field did not open for editing.`, {
-      detail: cause instanceof Error ? cause.message : String(cause),
-      hint: `Selector used: ${widget}`,
-      cause,
-    });
-  }
+  await openEditor(page, widget, target.label, timeoutMs);
 
   const opened = await readRow(page, target);
   const displayed = parseDisplayedNumber(before.displayed);
@@ -344,4 +334,162 @@ export function formatForField(value: number): string {
   if (!Number.isFinite(value)) return '0';
   if (Number.isInteger(value)) return value.toLocaleString('fullwide', { useGrouping: false, maximumFractionDigits: 0 });
   return value.toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/** The gestures tried, in order, to get a value field into edit mode. */
+const GESTURES = ['click', 'pointer', 'mouse', 'native', 'dblclick'] as const;
+type Gesture = (typeof GESTURES)[number];
+
+/**
+ * Opens a value field for editing.
+ *
+ * One click is all it takes with a real mouse, and that is what the first
+ * attempt is. Inside a Chrome extension the click is synthesised, and a
+ * synthetic one can miss: a control that captures the pointer throws on a
+ * pointerId that belongs to no real pointer, and its handler dies before the
+ * part that opens the box. So the click escalates - pointer events, then mouse
+ * events alone, then the element's own click(), then a double click - and each
+ * attempt is checked rather than assumed.
+ */
+async function openEditor(page: PageLike, widget: string, label: string, timeoutMs: number): Promise<void> {
+  const edit = `${widget} [contenteditable]`;
+  const tried: Gesture[] = [];
+  let lastError: unknown;
+  // The first attempt gets the full timeout, since it is also the one waiting
+  // for a slow page; the fallbacks only need to be given a moment each.
+  let budget = timeoutMs;
+  for (const gesture of GESTURES) {
+    if (await isOpen(page, edit)) return;
+    tried.push(gesture);
+    try {
+      if (gesture === 'click') await page.click?.(widget, { timeout: timeoutMs });
+      else await gestureAt(page, widget, gesture);
+    } catch (cause) {
+      lastError = cause;
+    }
+    if (await waitOpen(page, edit, budget)) return;
+    budget = 1_200;
+  }
+
+  throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${label} field did not open for editing.`, {
+    detail:
+      `Tried ${tried.join(', ')} on ${widget}` +
+      (lastError instanceof Error ? `; last error: ${lastError.message.split('\n')[0]}` : ''),
+    // The field as it stands after all that. Without a terminal - which is the
+    // whole point of the extension - this is the only way to see what the
+    // editor actually did, so it goes in the message rather than a log.
+    hint: `The field now reads: ${await describeWidget(page, widget)}`,
+    cause: lastError,
+  });
+}
+
+/** A short description of a field, for a failure someone has to read. */
+async function describeWidget(page: PageLike, widget: string): Promise<string> {
+  if (typeof page.evaluate !== 'function') return widget;
+  try {
+    return await page.evaluate<string, string>((selector) => {
+      const node = document.querySelector(selector);
+      if (node === null) return 'not on the page at all';
+      const box = node.getBoundingClientRect();
+      return (
+        `<${node.tagName.toLowerCase()} class="${node.className}"> ` +
+        `${Math.round(box.width)}x${Math.round(box.height)} at ${Math.round(box.left)},${Math.round(box.top)}, ` +
+        `text "${(node.textContent ?? '').trim().slice(0, 40)}"`
+      );
+    }, widget);
+  } catch {
+    return widget;
+  }
+}
+
+/** True once the edit box exists and has been laid out. */
+async function isOpen(page: PageLike, edit: string): Promise<boolean> {
+  if (typeof page.evaluate !== 'function') return false;
+  return page.evaluate<boolean, string>((selector) => {
+    const node = document.querySelector(selector);
+    if (node === null) return false;
+    const box = node.getBoundingClientRect();
+    return box.width > 0 || box.height > 0;
+  }, edit);
+}
+
+async function waitOpen(page: PageLike, edit: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await isOpen(page, edit)) return true;
+    await new Promise((done) => setTimeout(done, 80));
+  } while (Date.now() < deadline);
+  return false;
+}
+
+/** Dispatches one gesture inside the page, so it works with or without Playwright. */
+async function gestureAt(page: PageLike, selector: string, kind: Gesture): Promise<void> {
+  if (typeof page.evaluate !== 'function') return;
+  await page.evaluate<void, { selector: string; kind: string }>((input) => {
+    const element = document.querySelector(input.selector) as HTMLElement | null;
+    if (element === null) return;
+    // A real click lands on whatever is under the pointer, after the browser has
+    // brought it into view. Both matter: a handler that checks event.target
+    // ignores a press delivered to the wrapper instead of the number inside it,
+    // and a row scrolled out of the panel has no on-screen point at all.
+    element.scrollIntoView?.({ block: 'center', inline: 'center' });
+    const box = element.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const under = document.elementFromPoint(x, y);
+    const target = under !== null && element.contains(under) ? (under as HTMLElement) : element;
+    const fire = (type: string, extra: Record<string, unknown>): void => {
+      const init = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+        screenX: x,
+        screenY: y,
+        button: 0,
+        detail: 1,
+        ...extra,
+      };
+      const pointer = type.startsWith('pointer') && typeof PointerEvent === 'function';
+      target.dispatchEvent(
+        pointer
+          ? new PointerEvent(type, { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 })
+          : new MouseEvent(type, init),
+      );
+    };
+
+    if (input.kind === 'native') {
+      target.click();
+      return;
+    }
+    if (input.kind === 'dblclick') {
+      for (const detail of [1, 2]) {
+        fire('mousedown', { buttons: 1, detail });
+        fire('mouseup', { buttons: 0, detail });
+        fire('click', { detail });
+      }
+      fire('dblclick', { detail: 2 });
+      return;
+    }
+
+    // A control can arm on hover and only then read the press, so the pointer
+    // arrives before it is put down.
+    const usePointer = input.kind === 'pointer';
+    if (usePointer) {
+      fire('pointerover', { buttons: 0 });
+      fire('pointerenter', { buttons: 0 });
+    }
+    fire('mouseover', { buttons: 0 });
+    fire('mouseenter', { buttons: 0 });
+    if (usePointer) fire('pointermove', { buttons: 0 });
+    fire('mousemove', { buttons: 0 });
+    if (usePointer) fire('pointerdown', { buttons: 1, pressure: 0.5 });
+    fire('mousedown', { buttons: 1 });
+    (target.closest('[tabindex]') as HTMLElement | null)?.focus?.();
+    if (usePointer) fire('pointerup', { buttons: 0 });
+    fire('mouseup', { buttons: 0 });
+    fire('click', {});
+  }, { selector, kind });
 }

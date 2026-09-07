@@ -74,10 +74,17 @@ const skip = (): string | false =>
   browser === undefined || bundle === '' ? `Cannot run the extension bundle: ${reason}` : false;
 
 /** A page holding the fixture with the agent bundle injected, as a tab would. */
-async function openStudio(options: { hideOptional?: boolean } = {}): Promise<Page> {
+async function openStudio(options: { hideOptional?: boolean; openOn?: string; pointerThrows?: boolean } = {}): Promise<Page> {
   assert.ok(browser);
   const page = await browser.newPage();
   await page.goto(FIXTURE);
+  if (options.openOn !== undefined || options.pointerThrows === true) {
+    await page.evaluate((how: { openOn?: string; pointerThrows?: boolean }) => {
+      const w = window as unknown as { __openOn: string; __pointerCaptureThrows: boolean };
+      if (how.openOn !== undefined) w.__openOn = how.openOn;
+      if (how.pointerThrows === true) w.__pointerCaptureThrows = true;
+    }, { openOn: options.openOn, pointerThrows: options.pointerThrows });
+  }
   if (options.hideOptional === true) {
     // Most projects do not have Roll or Field of View on their timeline.
     await page.addStyleTag({
@@ -353,6 +360,30 @@ describe('running inside the page, as the extension does', () => {
     // The place name survives translation, which is why translating beats a
     // keyword table per language.
     assert.ok(result.places.includes('Japan'));
+    await page.close();
+  });
+
+  test('writes into a field that a synthesised click alone cannot open', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    // What the live editor did to the extension: the field never opened, and
+    // the run stopped at frame 0 with nothing written. A content script cannot
+    // make a real mouse press, so the click has to escalate until one lands.
+    const page = await openStudio({ openOn: 'mouse', pointerThrows: true });
+    const result = await run(page, 'fly to Rome. hold 2 seconds');
+
+    assert.equal(result.applied, result.total);
+    assert.ok(result.applied >= 3, `wrote ${result.applied}`);
+    await page.close();
+  });
+
+  test('writes into a field that wants a double click', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await openStudio({ openOn: 'dblclick' });
+    const result = await run(page, 'fly to Rome');
+
+    assert.equal(result.applied, result.total);
     await page.close();
   });
 

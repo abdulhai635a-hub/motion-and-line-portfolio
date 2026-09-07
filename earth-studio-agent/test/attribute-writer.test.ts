@@ -155,6 +155,72 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('opens a field that only a mousedown/mouseup pair counts as clicked', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await page.evaluate(() => {
+      (window as unknown as { __openOn: string }).__openOn = 'mouse';
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606);
+    assert.ok(Math.abs(result.readback - 35.3606) < 0.001);
+    await page.close();
+  });
+
+  test('opens a field that wants a double click', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await page.evaluate(() => {
+      (window as unknown as { __openOn: string }).__openOn = 'dblclick';
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606);
+    assert.ok(Math.abs(result.readback - 35.3606) < 0.001);
+    await page.close();
+  });
+
+  test('gets past a field whose pointerdown handler throws', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // A control that captures the pointer throws on a synthetic pointerId, and
+    // takes the rest of its own handler down with it. Mouse events alone still
+    // reach it.
+    await page.evaluate(() => {
+      (window as unknown as { __openOn: string }).__openOn = 'mouse';
+      (window as unknown as { __pointerCaptureThrows: boolean }).__pointerCaptureThrows = true;
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606);
+    assert.ok(Math.abs(result.readback - 35.3606) < 0.001);
+    await page.close();
+  });
+
+  test('says what it tried when nothing opens the field', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await page.evaluate(() => {
+      (window as unknown as { __openOn: string }).__openOn = 'never';
+    });
+
+    await assert.rejects(
+      () => writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606, { timeoutMs: 1_000 }),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_FIELD_WRITE_FAILED');
+        assert.match(error.detail ?? '', /click, pointer, mouse, native, dblclick/);
+        // The failure has to be readable without a terminal, so it says what
+        // the field looks like now.
+        assert.match(error.hint ?? '', /scrub-input/);
+        return true;
+      },
+    );
+    await page.close();
+  });
+
   test('adds a keyframe after committing the value', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);
