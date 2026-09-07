@@ -155,6 +155,52 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('drives the row on screen, not a hidden one that matches first', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // A project can carry more than one element per attribute type. The first
+    // in the document is not always the one a person sees, and clicking the
+    // other one does nothing at all - which is what a live run looked like.
+    await page.evaluate(() => {
+      const decoy = document.createElement('div');
+      decoy.setAttribute('data-attribute-type', 'latitude');
+      decoy.style.display = 'none';
+      decoy.innerHTML =
+        '<span class="scrub-input valueInput"><span class="presentedValueContainer">' +
+        '<span class="presentedValue">0</span></span><span class="unit degrees" title="Degrees">&deg;</span></span>';
+      document.body.insertBefore(decoy, document.body.firstChild);
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606);
+    assert.ok(Math.abs(result.readback - 35.3606) < 0.001);
+    // The decoy is untouched and the row on screen carries the new value.
+    const values = await page
+      .locator('[data-attribute-type="latitude"] .scrub-input.valueInput .presentedValue')
+      .allTextContents();
+    assert.deepEqual(values, ['0', '35.361']);
+    await page.close();
+  });
+
+  test('ignores a matching row that is laid out to nothing', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await page.evaluate(() => {
+      const decoy = document.createElement('div');
+      decoy.setAttribute('data-attribute-type', 'latitude');
+      decoy.style.cssText = 'width:0;height:0;overflow:hidden;position:absolute;';
+      decoy.innerHTML =
+        '<span class="scrub-input valueInput" style="width:0;height:0;display:block;overflow:hidden">' +
+        '<span class="presentedValueContainer"><span class="presentedValue">0</span></span></span>';
+      document.body.insertBefore(decoy, document.body.firstChild);
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 12.5);
+    assert.ok(Math.abs(result.readback - 12.5) < 0.001);
+    await page.close();
+  });
+
   test('opens a field that only a mousedown/mouseup pair counts as clicked', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);
@@ -214,7 +260,8 @@ describe('writeAttribute', () => {
         assert.match(error.detail ?? '', /click, pointer, mouse, native, dblclick/);
         // The failure has to be readable without a terminal, so it says what
         // the field looks like now.
-        assert.match(error.hint ?? '', /scrub-input/);
+        assert.match(error.hint ?? '', /#1 <span class="scrub-input valueInput">/);
+        assert.match(error.hint ?? '', /clickable/);
         return true;
       },
     );

@@ -59,11 +59,14 @@ interface RowState {
 
 const rowSelector = (type: string): string => `[data-attribute-type="${type}"]`;
 
-async function readRow(page: PageLike, target: AttributeTarget): Promise<RowState> {
+async function readRow(
+  page: PageLike,
+  target: AttributeTarget,
+  row = rowSelector(target.attributeType),
+): Promise<RowState> {
   if (typeof page.evaluate !== 'function') {
     throw new AgentError('DRIVER_NOT_READY', 'This page cannot be read.');
   }
-  const row = rowSelector(target.attributeType);
   const widget = `${row} ${target.widget}`;
   return page.evaluate<RowState, { row: string; widget: string }>(
     ({ row: rowSelectorText, widget: widgetSelectorText }) => {
@@ -119,10 +122,15 @@ export async function writeAttribute(
     });
   }
 
-  const row = rowSelector(target.attributeType);
+  // A project can carry more than one element per attribute type - a template,
+  // an off-screen copy, a row in a panel that is not the timeline - and the
+  // first one in the document is not always the one on screen. So the row is
+  // chosen by what it looks like, then marked, and everything below addresses
+  // the mark rather than the type.
+  const row = await pickRow(page, target);
   const widget = `${row} ${target.widget}`;
 
-  const before = await readRow(page, target);
+  const before = await readRow(page, target, row);
   if (!before.found) {
     throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `No ${target.label} row is on the page.`, {
       detail: `Looked for ${widget}`,
@@ -130,9 +138,9 @@ export async function writeAttribute(
     });
   }
 
-  await openEditor(page, widget, target.label, timeoutMs);
+  await openEditor(page, widget, target, rowSelector(target.attributeType), timeoutMs);
 
-  const opened = await readRow(page, target);
+  const opened = await readRow(page, target, row);
   const displayed = parseDisplayedNumber(before.displayed);
   const editBoxValue = parseDisplayedNumber(opened.editBox ?? '');
   // The unit label read BEFORE the click. Earth Studio relabels the altitude
@@ -166,9 +174,9 @@ export async function writeAttribute(
 
   // The edit box must close, or nothing was committed. One more Enter, then
   // give up cleanly rather than leaving the project mid-edit.
-  if (await stillEditing(page, target)) {
+  if (await stillEditing(page, target, row)) {
     await page.keyboard.press('Enter');
-    if (await stillEditing(page, target)) {
+    if (await stillEditing(page, target, row)) {
       await page.keyboard.press('Escape');
       throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field would not commit ${planned}.`, {
         detail: `Typed ${text}, but the edit box stayed open, so the value was never applied.`,
@@ -191,7 +199,7 @@ export async function writeAttribute(
 
   // Poll rather than read once: the readout catches up a moment after Enter.
   const deadline = Date.now() + settleTimeoutMs;
-  let after = await readRow(page, target);
+  let after = await readRow(page, target, row);
   let readback = toPlanned(after);
   let tolerance = toleranceFor(after);
   while (
@@ -199,7 +207,7 @@ export async function writeAttribute(
     (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance || after.editBox !== null)
   ) {
     await new Promise((done) => setTimeout(done, 100));
-    after = await readRow(page, target);
+    after = await readRow(page, target, row);
     readback = toPlanned(after);
     tolerance = toleranceFor(after);
   }
@@ -288,7 +296,7 @@ async function ensureKeyframe(
       attempts.push(`${name}: ${describe(cause)}`);
       continue;
     }
-    if (await keyframeAppeared(page, target)) {
+    if (await keyframeAppeared(page, target, row)) {
       landed = true;
       break;
     }
@@ -305,20 +313,20 @@ async function ensureKeyframe(
 }
 
 /** True when the edit box is still open a moment after Enter. */
-async function stillEditing(page: PageLike, target: AttributeTarget): Promise<boolean> {
+async function stillEditing(page: PageLike, target: AttributeTarget, row: string): Promise<boolean> {
   const deadline = Date.now() + 1_500;
   while (Date.now() < deadline) {
-    if ((await readRow(page, target)).editBox === null) return false;
+    if ((await readRow(page, target, row)).editBox === null) return false;
     await new Promise((done) => setTimeout(done, 100));
   }
   return true;
 }
 
 /** Waits briefly for the app to mark the row as keyframed at this frame. */
-async function keyframeAppeared(page: PageLike, target: AttributeTarget): Promise<boolean> {
+async function keyframeAppeared(page: PageLike, target: AttributeTarget, row: string): Promise<boolean> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
-    if ((await readRow(page, target)).hasKeyframe) return true;
+    if ((await readRow(page, target, row)).hasKeyframe) return true;
     await new Promise((done) => setTimeout(done, 100));
   }
   return false;
@@ -351,7 +359,14 @@ type Gesture = (typeof GESTURES)[number];
  * events alone, then the element's own click(), then a double click - and each
  * attempt is checked rather than assumed.
  */
-async function openEditor(page: PageLike, widget: string, label: string, timeoutMs: number): Promise<void> {
+async function openEditor(
+  page: PageLike,
+  widget: string,
+  target: AttributeTarget,
+  originalRow: string,
+  timeoutMs: number,
+): Promise<void> {
+  const label = target.label;
   const edit = `${widget} [contenteditable]`;
   const tried: Gesture[] = [];
   let lastError: unknown;
@@ -375,30 +390,81 @@ async function openEditor(page: PageLike, widget: string, label: string, timeout
     detail:
       `Tried ${tried.join(', ')} on ${widget}` +
       (lastError instanceof Error ? `; last error: ${lastError.message.split('\n')[0]}` : ''),
-    // The field as it stands after all that. Without a terminal - which is the
-    // whole point of the extension - this is the only way to see what the
-    // editor actually did, so it goes in the message rather than a log.
-    hint: `The field now reads: ${await describeWidget(page, widget)}`,
+    // Every candidate, not just the one that was tried. Without a terminal -
+    // which is the whole point of the extension - this message is the only way
+    // to see whether the field simply ignored the click or whether the wrong
+    // element was clicked all along.
+    hint: `Candidates for ${originalRow} ${target.widget}: ${await describeMatches(page, `${originalRow} ${target.widget}`)}`,
     cause: lastError,
   });
 }
 
-/** A short description of a field, for a failure someone has to read. */
-async function describeWidget(page: PageLike, widget: string): Promise<string> {
-  if (typeof page.evaluate !== 'function') return widget;
+/**
+ * The attribute row to drive, marked so that every later selector means this
+ * one element. Where several match, the visible one wins - and where several
+ * are visible, the one whose value field is largest, which is the row a person
+ * would have clicked.
+ */
+async function pickRow(page: PageLike, target: AttributeTarget): Promise<string> {
+  const plain = rowSelector(target.attributeType);
+  if (typeof page.evaluate !== 'function') return plain;
+  const marked = await page.evaluate<boolean, { row: string; widget: string; mark: string }>(
+    (input) => {
+      const rows = Array.from(document.querySelectorAll(input.row));
+      for (const node of Array.from(document.querySelectorAll(`[data-agent-row="${input.mark}"]`))) {
+        node.removeAttribute('data-agent-row');
+      }
+      if (rows.length === 0) return false;
+      const score = (node: Element): number => {
+        const field = node.querySelector(input.widget);
+        if (field === null) return -1;
+        const box = field.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0) return 0;
+        const style = getComputedStyle(field as HTMLElement);
+        if (style.visibility === 'hidden' || style.display === 'none') return 0;
+        return box.width * box.height;
+      };
+      let best = rows[0] as Element;
+      let bestScore = score(best);
+      for (const node of rows.slice(1)) {
+        const value = score(node);
+        if (value > bestScore) {
+          best = node;
+          bestScore = value;
+        }
+      }
+      best.setAttribute('data-agent-row', input.mark);
+      return true;
+    },
+    { row: plain, widget: target.widget, mark: target.attributeType },
+  );
+  return marked ? `[data-agent-row="${target.attributeType}"]` : plain;
+}
+
+/** Every element a selector matches, for a failure someone has to read. */
+async function describeMatches(page: PageLike, selector: string): Promise<string> {
+  if (typeof page.evaluate !== 'function') return selector;
   try {
-    return await page.evaluate<string, string>((selector) => {
-      const node = document.querySelector(selector);
-      if (node === null) return 'not on the page at all';
-      const box = node.getBoundingClientRect();
-      return (
-        `<${node.tagName.toLowerCase()} class="${node.className}"> ` +
-        `${Math.round(box.width)}x${Math.round(box.height)} at ${Math.round(box.left)},${Math.round(box.top)}, ` +
-        `text "${(node.textContent ?? '').trim().slice(0, 40)}"`
-      );
-    }, widget);
+    return await page.evaluate<string, string>((query) => {
+      const nodes = Array.from(document.querySelectorAll(query));
+      if (nodes.length === 0) return 'none on the page at all';
+      return nodes
+        .map((node, index) => {
+          const box = node.getBoundingClientRect();
+          const centreX = box.left + box.width / 2;
+          const centreY = box.top + box.height / 2;
+          const under = document.elementFromPoint(centreX, centreY);
+          const covered = under === null ? 'off-screen' : node.contains(under) ? 'clickable' : `covered by <${under.tagName.toLowerCase()} class="${under.className}">`;
+          return (
+            `#${index + 1} <${node.tagName.toLowerCase()} class="${node.className}"> ` +
+            `${Math.round(box.width)}x${Math.round(box.height)} at ${Math.round(box.left)},${Math.round(box.top)} ` +
+            `text "${(node.textContent ?? '').trim().slice(0, 24)}" ${covered}`
+          );
+        })
+        .join(' | ');
+    }, selector);
   } catch {
-    return widget;
+    return selector;
   }
 }
 
