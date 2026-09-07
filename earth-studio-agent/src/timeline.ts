@@ -51,8 +51,29 @@ export async function resolveSteps(
   const { implicitStart = true, onAmbiguous } = options;
   const warnings: Warning[] = [];
 
+  // A keyframe table already says where the shot opens, so nothing is put in
+  // front of it. Turning its absolute times into durations is all it needs:
+  // every step below then works the way it always has.
+  const tabled = parsed.some((step) => step.atSeconds !== null);
+  if (tabled) {
+    let previousAt = 0;
+    for (const step of parsed) {
+      if (step.atSeconds === null) continue;
+      const span = round(step.atSeconds - previousAt, 3);
+      if (span < 0) {
+        warnings.push({
+          code: 'KEYFRAME_OUT_OF_ORDER',
+          stepIndex: step.index,
+          message: `This keyframe is timed at ${step.atSeconds}s, before the one above it; it was kept where it is.`,
+        });
+      }
+      step.durationSeconds = span > 0 ? span : null;
+      previousAt = step.atSeconds;
+    }
+  }
+
   const steps: ParsedStep[] =
-    implicitStart && parsed[0]?.action !== 'start'
+    implicitStart && !tabled && parsed[0]?.action !== 'start'
       ? [{
           index: 0,
           action: 'start',
@@ -61,7 +82,10 @@ export async function resolveSteps(
           fromZoom: null,
           altitudeMeters: null,
           durationSeconds: null,
+          atSeconds: null,
           tiltDegrees: null,
+          panDegrees: null,
+          rollDegrees: null,
           fieldOfViewDegrees: null,
           speedScale: null,
           source: '(implicit establishing pose)',
@@ -164,6 +188,8 @@ export async function resolveSteps(
   // An angle, lens or pace named once holds until it is named again, which is
   // how people write: "then fly to Kyoto, slowly" means the rest is slow too.
   let stickyTilt: number | null = null;
+  let stickyPan: number | null = null;
+  let stickyRoll: number | null = null;
   let stickyFieldOfView: number | null = null;
   let stickySpeed: number | null = null;
 
@@ -195,6 +221,8 @@ export async function resolveSteps(
 
     const altitude = decideAltitude(step, place.kind, previousAltitude, config);
     if (step.tiltDegrees !== null) stickyTilt = step.tiltDegrees;
+    if (step.panDegrees !== null) stickyPan = step.panDegrees;
+    if (step.rollDegrees !== null) stickyRoll = step.rollDegrees;
     if (step.fieldOfViewDegrees !== null) stickyFieldOfView = step.fieldOfViewDegrees;
     if (step.speedScale !== null) stickySpeed = step.speedScale;
 
@@ -212,6 +240,8 @@ export async function resolveSteps(
       durationSource: duration.source,
       tilt: tilt.value,
       tiltSource: tilt.source,
+      pan: stickyPan ?? config.defaultPan,
+      roll: stickyRoll ?? config.defaultRoll,
       fieldOfView: stickyFieldOfView,
       zoom: step.zoom,
       source: step.source,
@@ -436,9 +466,9 @@ function makeKeyframe(
     latitude: place.latitude,
     longitude: place.longitude,
     altitude: step.altitude,
-    pan: config.defaultPan,
+    pan: step.pan,
     tilt: step.tilt,
-    roll: config.defaultRoll,
+    roll: step.roll,
     fieldOfView: step.fieldOfView ?? config.defaultFieldOfView,
   };
   return {

@@ -61,7 +61,7 @@ before(async () => {
     const { chromium } = await import('playwright');
     browser = await chromium.launch({ executablePath: findChromium() });
   } catch (error) {
-    reason = (error instanceof Error ? error.message : String(error)).split('\n')[0] ?? 'unknown';
+    reason = (error instanceof Error ? error.message : String(error)).split('\n').slice(0, 4).join(' ') || 'unknown';
   }
 });
 
@@ -70,8 +70,14 @@ after(async () => {
   if (workspace !== undefined) await rm(workspace, { recursive: true, force: true });
 });
 
-const skip = (): string | false =>
-  browser === undefined || bundle === '' ? `Cannot run the extension bundle: ${reason}` : false;
+/**
+ * Skipping is for a missing browser, never for a bundle that would not build:
+ * a broken build once took fifteen of these tests quietly out of the run.
+ */
+const skip = (): string | false => {
+  if (bundle === '') throw new Error(`The extension bundle did not build: ${reason}`);
+  return browser === undefined ? `Chromium unavailable: ${reason}` : false;
+};
 
 /** A page holding the fixture with the agent bundle injected, as a tab would. */
 async function openStudio(options: { hideOptional?: boolean; openOn?: string; pointerThrows?: boolean } = {}): Promise<Page> {

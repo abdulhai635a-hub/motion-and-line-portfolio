@@ -39,6 +39,14 @@ export interface ParsedStep {
   durationSeconds: number | null;
   /** The level a move starts from ("push in from high orbit"), if it says. */
   fromZoom: ZoomDescriptor | null;
+  /**
+   * Absolute time from the start of the shot, when the command is a keyframe
+   * table that says when each pose happens rather than how long each move takes.
+   */
+  atSeconds: number | null;
+  /** Explicit heading and roll, which only a keyframe table gives. */
+  panDegrees: number | null;
+  rollDegrees: number | null;
   /** Explicit tilt in degrees ("tilt 45"); null means "work it out". */
   tiltDegrees: number | null;
   /** Explicit field of view; null means "leave the project's lens alone". */
@@ -97,6 +105,9 @@ export interface ResolvedStep {
   /** Tilt written at this step's keyframe. */
   tilt: number;
   tiltSource: 'explicit' | 'automatic' | 'default';
+  /** Heading and roll written at this step's keyframe. */
+  pan: number;
+  roll: number;
   /** Field of view, when the command asked for one. */
   fieldOfView: number | null;
   zoom: ZoomDescriptor | null;

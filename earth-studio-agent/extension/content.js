@@ -560,6 +560,98 @@
     return Number(value.toFixed(6));
   }
 
+  // src/keyframe-row.ts
+  var NUMBER = String.raw`[+-]?\d+(?:\.\d+)?`;
+  var labelled = (labels) => new RegExp(String.raw`\b(?:${labels})\b\s*[:=]?\s*(${NUMBER})`, "i");
+  var LATITUDE = labelled("lat|latitude");
+  var LONGITUDE = labelled("lon|lng|long|longitude");
+  var PAN = labelled("pan|heading|azimuth|yaw|bearing");
+  var TILT = labelled("tilt|pitch");
+  var ROLL = labelled("roll");
+  var FOV = labelled("fov|field of view|focal");
+  var ALTITUDE_LABELLED = new RegExp(
+    String.raw`\b(?:alt|altitude|height|elevation|elev)\b\s*[:=]?\s*(${NUMBER})\s*(m|metres|meters|km|kilometres|kilometers|ft|feet)?`,
+    "i"
+  );
+  var ALTITUDE_BY_UNIT = new RegExp(String.raw`(${NUMBER})\s*(m|metres|meters|km|kilometres|kilometers|ft|feet)\b`, "i");
+  var TIME = new RegExp(String.raw`(?:\bt\s*=\s*|\bat\s+)?(${NUMBER})\s*s(?:ec|econds?)?\b`, "i");
+  var METRES_PER_UNIT = {
+    m: 1,
+    metre: 1,
+    metres: 1,
+    meter: 1,
+    meters: 1,
+    km: 1e3,
+    kilometre: 1e3,
+    kilometres: 1e3,
+    kilometer: 1e3,
+    kilometers: 1e3,
+    ft: 0.3048,
+    feet: 0.3048
+  };
+  function parseKeyframeRow(line) {
+    const text = line.replace(/(\d),(?=\d{3}\b)/g, "$1");
+    const latitude = read(text, LATITUDE);
+    const longitude = read(text, LONGITUDE);
+    if (latitude === null || longitude === null) return null;
+    if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+    const head = text.slice(0, Math.min(indexOf(text, LATITUDE), indexOf(text, LONGITUDE)));
+    const time = read(head, TIME);
+    return {
+      atSeconds: time !== null && time >= 0 ? time : null,
+      latitude,
+      longitude,
+      altitudeMeters: readAltitude(text),
+      panDegrees: read(text, PAN),
+      tiltDegrees: read(text, TILT),
+      rollDegrees: read(text, ROLL),
+      fieldOfViewDegrees: read(text, FOV)
+    };
+  }
+  function parseProjectSettings(line) {
+    const settings = {};
+    const fps = /(\d+(?:\.\d+)?)\s*(?:fps|frames?\s*per\s*second)\b/i.exec(line);
+    if (fps !== null) {
+      const value = Number(fps[1]);
+      if (Number.isFinite(value) && value > 0 && value <= 240) settings.frameRate = value;
+    }
+    const size = /\b(\d{3,5})\s*[x×*]\s*(\d{3,5})\b/i.exec(line);
+    if (size !== null) {
+      const width = Number(size[1]);
+      const height = Number(size[2]);
+      if (Number.isInteger(width) && Number.isInteger(height)) {
+        settings.width = width;
+        settings.height = height;
+      }
+    }
+    return settings.frameRate === void 0 && settings.width === void 0 ? null : settings;
+  }
+  function read(text, pattern) {
+    const match = pattern.exec(text);
+    if (match === null) return null;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value : null;
+  }
+  function indexOf(text, pattern) {
+    const match = pattern.exec(text);
+    return match === null ? text.length : match.index;
+  }
+  function readAltitude(text) {
+    const labelledMatch = ALTITUDE_LABELLED.exec(text);
+    if (labelledMatch !== null) {
+      const value = Number(labelledMatch[1]);
+      const unit = (labelledMatch[2] ?? "m").toLowerCase();
+      if (Number.isFinite(value)) return value * (METRES_PER_UNIT[unit] ?? 1);
+    }
+    const byUnit = ALTITUDE_BY_UNIT.exec(text);
+    if (byUnit !== null) {
+      const value = Number(byUnit[1]);
+      const unit = (byUnit[2] ?? "m").toLowerCase();
+      if (Number.isFinite(value)) return value * (METRES_PER_UNIT[unit] ?? 1);
+    }
+    return null;
+  }
+
   // src/parser.ts
   var EXTRA_PROTECTED_PLACES = [
     "antigua and barbuda",
@@ -618,7 +710,7 @@
     hour: 3600,
     hours: 3600
   };
-  var METRES_PER_UNIT = {
+  var METRES_PER_UNIT2 = {
     m: 1,
     meter: 1,
     meters: 1,
@@ -734,7 +826,33 @@
     const steps = [];
     const ignored = [];
     const pending = [];
+    const notes = [];
+    let project;
+    let tabled = false;
     for (const sentence of splitSentences(text)) {
+      const restoredSentence = restore(sentence).trim();
+      const row = parseKeyframeRow(restoredSentence);
+      if (row !== null) {
+        tabled = true;
+        steps.push({
+          index: steps.length + 1,
+          action: steps.length === 0 ? "start" : "fly_to",
+          placeQuery: `${row.latitude.toFixed(6)}, ${row.longitude.toFixed(6)}`,
+          zoom: null,
+          fromZoom: null,
+          altitudeMeters: row.altitudeMeters,
+          durationSeconds: null,
+          atSeconds: row.atSeconds,
+          tiltDegrees: row.tiltDegrees,
+          panDegrees: row.panDegrees,
+          rollDegrees: row.rollDegrees,
+          fieldOfViewDegrees: row.fieldOfViewDegrees,
+          speedScale: null,
+          source: restoredSentence
+        });
+        continue;
+      }
+      project = project ?? parseProjectSettings(restoredSentence) ?? void 0;
       let mergeTarget = null;
       for (const rawClause of splitClauses(sentence)) {
         const clause = restore(rawClause).trim();
@@ -762,13 +880,25 @@
         mergeTarget = step2;
       }
     }
+    if (tabled) {
+      for (const step2 of steps) {
+        if (step2.atSeconds === null && step2.panDegrees === null) notes.push(step2.source);
+      }
+      const rows = steps.filter((step2) => step2.atSeconds !== null || step2.panDegrees !== null);
+      steps.length = 0;
+      steps.push(...rows);
+      steps.forEach((step2, i) => {
+        step2.index = i + 1;
+        step2.action = i === 0 ? "start" : "fly_to";
+      });
+    }
     if (steps.length === 0) {
       throw new AgentError("NO_STEPS_PARSED", "No camera steps could be read from the command.", {
         detail: ignored.length > 0 ? `Unrecognised text: ${ignored.join(" | ")}` : void 0,
         hint: 'Name at least one place and one action, e.g. "fly to Rome and zoom in close".'
       });
     }
-    return { steps, ignored };
+    return { steps, ignored, project, notes };
   }
   function mergeInto(target, extra) {
     if (extra.zoom !== null) target.zoom = extra.zoom;
@@ -870,7 +1000,10 @@
       fromZoom,
       altitudeMeters: altitude.value,
       durationSeconds: duration.value,
+      atSeconds: null,
       tiltDegrees: tilt.value,
+      panDegrees: null,
+      rollDegrees: null,
       fieldOfViewDegrees: fieldOfView.value,
       speedScale: speed.value,
       source
@@ -911,7 +1044,7 @@
     }
     return { value: null, rest: text };
   }
-  var ALTITUDE_UNITS = Object.keys(METRES_PER_UNIT).sort((a, b) => b.length - a.length).join("|");
+  var ALTITUDE_UNITS = Object.keys(METRES_PER_UNIT2).sort((a, b) => b.length - a.length).join("|");
   var ALTITUDE_STRICT = new RegExp(
     `\\b(?:to|at|of|altitude|height|elevation)\\s+(?:an?\\s+)?([0-9][0-9,.]*)\\s*(${ALTITUDE_UNITS})\\b`
   );
@@ -921,7 +1054,7 @@
     const match = text.match(ALTITUDE_STRICT) ?? (ALTITUDE_CUE.test(text) ? text.match(ALTITUDE_LOOSE) : null);
     if (!match) return { value: null, rest: text };
     const amount = Number.parseFloat((match[1] ?? "").replace(/,/g, ""));
-    const factor = METRES_PER_UNIT[match[2] ?? ""];
+    const factor = METRES_PER_UNIT2[match[2] ?? ""];
     if (!Number.isFinite(amount) || factor === void 0) return { value: null, rest: text };
     return { value: round3(amount * factor, 3), rest: text.replace(match[0], " ") };
   }
@@ -1009,11 +1142,65 @@
     return Math.round(value * factor) / factor;
   }
 
+  // src/plan-settings.ts
+  function applyProjectSettings(base, project) {
+    if (project === void 0) return { config: base, warnings: [] };
+    const warnings = [];
+    const config = { ...base };
+    const effective = makeConfig(base);
+    if (project.frameRate !== void 0 && project.frameRate !== effective.frameRate) {
+      warnings.push({
+        code: "PROJECT_FROM_COMMAND",
+        message: `The plan asks for ${project.frameRate} fps, so that is what the frames are counted in.`
+      });
+      config.frameRate = project.frameRate;
+    }
+    if (project.width !== void 0 && project.height !== void 0) {
+      if (project.width !== effective.width || project.height !== effective.height) {
+        warnings.push({
+          code: "PROJECT_FROM_COMMAND",
+          message: `The plan asks for ${project.width}x${project.height}; set that in Earth Studio's project settings.`
+        });
+      }
+      config.width = project.width;
+      config.height = project.height;
+    }
+    return { config, warnings };
+  }
+  function noteWarnings(notes) {
+    if (notes.length === 0) return [];
+    const shown = notes.slice(0, 3).map((note) => `"${note.trim()}"`);
+    const rest = notes.length - shown.length;
+    return [
+      {
+        code: "TABLE_IS_THE_SHOT",
+        message: `The keyframe table is the whole shot, so everything beside it was read as a note: ${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}.`
+      }
+    ];
+  }
+
   // src/timeline.ts
   async function resolveSteps(parsed, geocoder, config, options = {}) {
     const { implicitStart = true, onAmbiguous } = options;
     const warnings = [];
-    const steps = implicitStart && parsed[0]?.action !== "start" ? [{
+    const tabled = parsed.some((step2) => step2.atSeconds !== null);
+    if (tabled) {
+      let previousAt = 0;
+      for (const step2 of parsed) {
+        if (step2.atSeconds === null) continue;
+        const span = round4(step2.atSeconds - previousAt, 3);
+        if (span < 0) {
+          warnings.push({
+            code: "KEYFRAME_OUT_OF_ORDER",
+            stepIndex: step2.index,
+            message: `This keyframe is timed at ${step2.atSeconds}s, before the one above it; it was kept where it is.`
+          });
+        }
+        step2.durationSeconds = span > 0 ? span : null;
+        previousAt = step2.atSeconds;
+      }
+    }
+    const steps = implicitStart && !tabled && parsed[0]?.action !== "start" ? [{
       index: 0,
       action: "start",
       placeQuery: null,
@@ -1021,7 +1208,10 @@
       fromZoom: null,
       altitudeMeters: null,
       durationSeconds: null,
+      atSeconds: null,
       tiltDegrees: null,
+      panDegrees: null,
+      rollDegrees: null,
       fieldOfViewDegrees: null,
       speedScale: null,
       source: "(implicit establishing pose)"
@@ -1092,6 +1282,8 @@
     const resolved = [];
     let previousAltitude = null;
     let stickyTilt = null;
+    let stickyPan = null;
+    let stickyRoll = null;
     let stickyFieldOfView = null;
     let stickySpeed = null;
     for (let i = 0; i < steps.length; i += 1) {
@@ -1118,6 +1310,8 @@
       }
       const altitude = decideAltitude(step2, place.kind, previousAltitude, config);
       if (step2.tiltDegrees !== null) stickyTilt = step2.tiltDegrees;
+      if (step2.panDegrees !== null) stickyPan = step2.panDegrees;
+      if (step2.rollDegrees !== null) stickyRoll = step2.rollDegrees;
       if (step2.fieldOfViewDegrees !== null) stickyFieldOfView = step2.fieldOfViewDegrees;
       if (step2.speedScale !== null) stickySpeed = step2.speedScale;
       const previous = resolved.at(-1);
@@ -1133,6 +1327,8 @@
         durationSource: duration.source,
         tilt: tilt.value,
         tiltSource: tilt.source,
+        pan: stickyPan ?? config.defaultPan,
+        roll: stickyRoll ?? config.defaultRoll,
         fieldOfView: stickyFieldOfView,
         zoom: step2.zoom,
         source: step2.source
@@ -1283,9 +1479,9 @@
       latitude: place.latitude,
       longitude: place.longitude,
       altitude: step2.altitude,
-      pan: config.defaultPan,
+      pan: step2.pan,
       tilt: step2.tilt,
-      roll: config.defaultRoll,
+      roll: step2.roll,
       fieldOfView: step2.fieldOfView ?? config.defaultFieldOfView
     };
     return {
@@ -2533,13 +2729,15 @@
     notify({ stage: "translating", message: "Reading the command" });
     const translation = await toEnglish(command, options.language ?? {});
     notify({ stage: "planning", message: "Working out the camera path" });
-    const config = makeConfig(options.config ?? {});
+    const parsed = parseCommand(translation.english);
+    const settings = applyProjectSettings(options.config ?? {}, parsed.project);
+    const config = makeConfig(settings.config);
     const providers = [offlineProvider];
     if (options.online === true) providers.push(createNominatimProvider());
     const geocoder = new Geocoder({ providers, ambiguityRatio: config.ambiguityRatio });
-    const { steps, ignored } = parseCommand(translation.english);
+    const { steps, ignored, notes } = parsed;
     const resolved = await resolveSteps(steps, geocoder, config);
-    const warnings = [...resolved.warnings];
+    const warnings = [...resolved.warnings, ...settings.warnings, ...noteWarnings(notes)];
     for (const clause of ignored) {
       warnings.push({ code: "CLAUSE_IGNORED", message: `Could not interpret "${clause}"; it was left out.` });
     }

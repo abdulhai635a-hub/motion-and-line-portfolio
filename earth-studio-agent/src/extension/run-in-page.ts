@@ -10,6 +10,7 @@ import type { CameraPath, GeoPlace, Warning } from '../types.ts';
 import type { DeepPartial, SessionConfig } from '../config.ts';
 import { makeConfig } from '../config.ts';
 import { parseCommand } from '../parser.ts';
+import { applyProjectSettings, noteWarnings } from '../plan-settings.ts';
 import { buildTimeline, resolveSteps } from '../timeline.ts';
 import { Geocoder, createNominatimProvider, offlineProvider } from '../geocode/index.ts';
 import { EarthStudioDriver, type DriveReport, type LayoutReport } from '../driver/earth-studio-driver.ts';
@@ -57,14 +58,18 @@ export async function runCommandInPage(command: string, options: RunOptions = {}
   const translation = await toEnglish(command, options.language ?? {});
 
   notify({ stage: 'planning', message: 'Working out the camera path' });
-  const config = makeConfig(options.config ?? {});
+  const parsed = parseCommand(translation.english);
+  // A plan that states its own project settings is describing the timeline
+  // these keyframes belong on, which beats any default the panel carries.
+  const settings = applyProjectSettings(options.config ?? {}, parsed.project);
+  const config = makeConfig(settings.config);
   const providers = [offlineProvider];
   if (options.online === true) providers.push(createNominatimProvider());
   const geocoder = new Geocoder({ providers, ambiguityRatio: config.ambiguityRatio });
 
-  const { steps, ignored } = parseCommand(translation.english);
+  const { steps, ignored, notes } = parsed;
   const resolved = await resolveSteps(steps, geocoder, config);
-  const warnings: Warning[] = [...resolved.warnings];
+  const warnings: Warning[] = [...resolved.warnings, ...settings.warnings, ...noteWarnings(notes)];
   for (const clause of ignored) {
     warnings.push({ code: 'CLAUSE_IGNORED', message: `Could not interpret "${clause}"; it was left out.` });
   }

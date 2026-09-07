@@ -22,6 +22,7 @@ import type { ActionKind, ParsedStep, ZoomDescriptor } from './types.ts';
 import { AgentError } from './errors.ts';
 import { multiWordPlaceNames } from './geocode/gazetteer.ts';
 import { findCoordinates } from './geocode/coordinates.ts';
+import { parseKeyframeRow, parseProjectSettings, type ProjectSettings } from './keyframe-row.ts';
 
 /**
  * Place names whose own punctuation would otherwise be read as a clause break.
@@ -148,6 +149,10 @@ export interface ParseResult {
   steps: ParsedStep[];
   /** Clauses understood as nothing at all, so the CLI can warn instead of skipping silently. */
   ignored: string[];
+  /** Frame rate and frame size, when the command states them. */
+  project?: ProjectSettings;
+  /** Lines a keyframe table made irrelevant: headings, easing notes, prose. */
+  notes: string[];
 }
 
 export function parseCommand(command: string): ParseResult {
@@ -164,8 +169,39 @@ export function parseCommand(command: string): ParseResult {
   const ignored: string[] = [];
   /** Modifiers read before any step existed, waiting for the first one. */
   const pending: ClauseFields[] = [];
+  /** Prose beside a keyframe table: kept only to say what was left out. */
+  const notes: string[] = [];
+
+  let project: ProjectSettings | undefined;
+  let tabled = false;
 
   for (const sentence of splitSentences(text)) {
+    // A keyframe table is already the answer: the row says where the camera is
+    // and when, so it is read whole rather than picked apart into clauses.
+    const restoredSentence = restore(sentence).trim();
+    const row = parseKeyframeRow(restoredSentence);
+    if (row !== null) {
+      tabled = true;
+      steps.push({
+        index: steps.length + 1,
+        action: steps.length === 0 ? 'start' : 'fly_to',
+        placeQuery: `${row.latitude.toFixed(6)}, ${row.longitude.toFixed(6)}`,
+        zoom: null,
+        fromZoom: null,
+        altitudeMeters: row.altitudeMeters,
+        durationSeconds: null,
+        atSeconds: row.atSeconds,
+        tiltDegrees: row.tiltDegrees,
+        panDegrees: row.panDegrees,
+        rollDegrees: row.rollDegrees,
+        fieldOfViewDegrees: row.fieldOfViewDegrees,
+        speedScale: null,
+        source: restoredSentence,
+      });
+      continue;
+    }
+    project = project ?? parseProjectSettings(restoredSentence) ?? undefined;
+
     let mergeTarget: ParsedStep | null = null;
     for (const rawClause of splitClauses(sentence)) {
       const clause = restore(rawClause).trim();
@@ -205,13 +241,29 @@ export function parseCommand(command: string): ParseResult {
     }
   }
 
+  if (tabled) {
+    // The table is the whole shot. The prose around it - a heading, an easing
+    // note, a sentence about what the viewer will see - describes those same
+    // keyframes; read as steps it would append moves nobody asked for.
+    for (const step of steps) {
+      if (step.atSeconds === null && step.panDegrees === null) notes.push(step.source);
+    }
+    const rows = steps.filter((step) => step.atSeconds !== null || step.panDegrees !== null);
+    steps.length = 0;
+    steps.push(...rows);
+    steps.forEach((step, i) => {
+      step.index = i + 1;
+      step.action = i === 0 ? 'start' : 'fly_to';
+    });
+  }
+
   if (steps.length === 0) {
     throw new AgentError('NO_STEPS_PARSED', 'No camera steps could be read from the command.', {
       detail: ignored.length > 0 ? `Unrecognised text: ${ignored.join(' | ')}` : undefined,
       hint: 'Name at least one place and one action, e.g. "fly to Rome and zoom in close".',
     });
   }
-  return { steps, ignored };
+  return { steps, ignored, project, notes };
 }
 
 /** Folds a modifier clause into the step it describes. */
@@ -377,7 +429,10 @@ function parseClause(clause: string): ClauseResult | null {
     fromZoom,
     altitudeMeters: altitude.value,
     durationSeconds: duration.value,
+    atSeconds: null,
     tiltDegrees: tilt.value,
+    panDegrees: null,
+    rollDegrees: null,
     fieldOfViewDegrees: fieldOfView.value,
     speedScale: speed.value,
     source,

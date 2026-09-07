@@ -5,9 +5,10 @@
  * src/driver/, because everything up to here is pure and testable without a
  * browser.
  */
-import type { CameraPath, GeoPlace } from './types.ts';
+import type { CameraPath, GeoPlace, Warning } from './types.ts';
 import { makeConfig, type DeepPartial, type SessionConfig } from './config.ts';
 import { parseCommand } from './parser.ts';
+import { applyProjectSettings, noteWarnings } from './plan-settings.ts';
 import { Geocoder, createNominatimProvider, offlineProvider, type GeocodeProvider } from './geocode/index.ts';
 import { buildTimeline, resolveSteps } from './timeline.ts';
 
@@ -30,16 +31,21 @@ export interface PlanResult {
 }
 
 export async function planCameraPath(command: string, options: PlanOptions = {}): Promise<PlanResult> {
-  const config = makeConfig(options.config ?? {});
+  const parsed = parseCommand(command);
+  const { steps, ignored, notes } = parsed;
+  // A plan that states its own project - "4 seconds, 30 fps, 1920x1080" - is
+  // describing the timeline these keyframes belong on, which is more specific
+  // than any default. It is applied, and said out loud.
+  const settings = applyProjectSettings(options.config ?? {}, parsed.project);
+  const config = makeConfig(settings.config);
   const geocoder = options.geocoder ?? defaultGeocoder(config, options.online === true);
 
-  const { steps, ignored } = parseCommand(command);
   const resolved = await resolveSteps(steps, geocoder, config, {
     implicitStart: options.implicitStart,
     onAmbiguous: options.onAmbiguous,
   });
 
-  const warnings = [...resolved.warnings];
+  const warnings = [...resolved.warnings, ...settings.warnings, ...noteWarnings(notes)];
   for (const clause of ignored) {
     warnings.push({ code: 'CLAUSE_IGNORED', message: `Could not interpret "${clause}"; it was left out of the timeline.` });
   }
@@ -55,6 +61,7 @@ export function defaultGeocoder(config: SessionConfig, online: boolean): Geocode
 }
 
 export { parseCommand } from './parser.ts';
+export { applyProjectSettings, noteWarnings } from './plan-settings.ts';
 export { Geocoder } from './geocode/index.ts';
 export { buildTimeline, resolveSteps } from './timeline.ts';
 export { makeConfig, DEFAULT_CONFIG, DEFAULT_ALTITUDE_TABLE } from './config.ts';

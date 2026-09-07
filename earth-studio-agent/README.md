@@ -203,6 +203,30 @@ Two conveniences worth knowing:
 - **A bare `zoom in` / `zoom out`** moves one rung along the altitude table
   below, relative to where the camera already is.
 
+### A plan written as a keyframe table
+
+A plan can arrive already solved, and then there is nothing to work out:
+
+```
+Place: Carajas Mine, Serra Norte, Para, Brazil
+Project: 4 seconds - 30 fps - 1920x1080
+Keyframe 1 - 0.0s : lat -10.0000 - lon -55.0000 - altitude 800,000 m - pan 0 - tilt 0 - roll 0
+Keyframe 2 - 4.0s : lat -6.0586 - lon -50.1769 - altitude 15,000 m - pan 300 - tilt 65 - roll 0
+Easing: ease in-out on both keyframes
+```
+
+Every value is typed in exactly as written, at the frame the time asks for -
+no establishing pose is invented, no duration is guessed, no tilt is worked
+out. A row is recognised by carrying a labelled latitude and longitude, not by
+the word "keyframe": these plans arrive in every language and through a
+translator, and `lat`, `lon` and the numbers are what survive that. The
+altitude is read from its unit if the word beside it did not survive.
+
+The table is the whole shot, so the lines around it - a heading, an easing
+note, a sentence about what the viewer will see - are reported as notes rather
+than turned into extra moves. A stated frame rate or frame size is applied to
+the plan, and said so in a warning.
+
 ### Pasting a shot plan
 
 A brief written for a person - a heading, a coordinate in brackets, `Type:`,

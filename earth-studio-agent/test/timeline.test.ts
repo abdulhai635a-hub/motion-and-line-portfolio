@@ -153,7 +153,7 @@ describe('resolveSteps', () => {
     const config = makeConfig();
     await assert.rejects(
       () => resolveSteps(
-        [{ index: 1, action: 'hold', placeQuery: null, zoom: null, fromZoom: null, altitudeMeters: null, durationSeconds: 2, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'hold 2s' }],
+        [{ index: 1, action: 'hold', placeQuery: null, zoom: null, fromZoom: null, altitudeMeters: null, durationSeconds: 2, atSeconds: null, tiltDegrees: null, panDegrees: null, rollDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'hold 2s' }],
         new Geocoder(),
         config,
         { implicitStart: false },
@@ -171,7 +171,7 @@ describe('resolveSteps', () => {
     const config = makeConfig();
     await assert.rejects(
       () => resolveSteps(
-        [{ index: 1, action: 'fly_to', placeQuery: 'Rome', zoom: null, fromZoom: null, altitudeMeters: null, durationSeconds: 0, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'x' }],
+        [{ index: 1, action: 'fly_to', placeQuery: 'Rome', zoom: null, fromZoom: null, altitudeMeters: null, durationSeconds: 0, atSeconds: null, tiltDegrees: null, panDegrees: null, rollDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'x' }],
         new Geocoder(),
         config,
       ),
