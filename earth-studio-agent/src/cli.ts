@@ -66,10 +66,13 @@ Project (PRD 8 defaults)
   --fps <n>                frame rate, default 30
   --width <n>              default 1920
   --height <n>             default 1080
-  --transition <seconds>   default move duration, default 4
+  --transition <seconds>   fix every move at this length; left out, each move is
+                           timed from how far and how far down it travels
   --hold <seconds>         default hold duration, default 2
-  --tilt <degrees>         camera tilt written at every keyframe, default 0
-  --fov <degrees>          field of view, default 60
+  --tilt <degrees>         fix the tilt; left out, it follows the altitude -
+                           straight down from orbit, angled on a close pass
+  --fov <degrees>          field of view; left out, the project's own lens is
+                           left alone
   --start-altitude <m>     altitude of the opening pose, default 10000000
   --no-implicit-start      do not prepend an establishing pose
 

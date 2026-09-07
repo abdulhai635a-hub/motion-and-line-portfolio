@@ -133,7 +133,7 @@ describe('resolveSteps', () => {
     const config = makeConfig();
     await assert.rejects(
       () => resolveSteps(
-        [{ index: 1, action: 'hold', placeQuery: null, zoom: null, altitudeMeters: null, durationSeconds: 2, source: 'hold 2s' }],
+        [{ index: 1, action: 'hold', placeQuery: null, zoom: null, altitudeMeters: null, durationSeconds: 2, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'hold 2s' }],
         new Geocoder(),
         config,
         { implicitStart: false },
@@ -151,7 +151,7 @@ describe('resolveSteps', () => {
     const config = makeConfig();
     await assert.rejects(
       () => resolveSteps(
-        [{ index: 1, action: 'fly_to', placeQuery: 'Rome', zoom: null, altitudeMeters: null, durationSeconds: 0, source: 'x' }],
+        [{ index: 1, action: 'fly_to', placeQuery: 'Rome', zoom: null, altitudeMeters: null, durationSeconds: 0, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'x' }],
         new Geocoder(),
         config,
       ),
@@ -165,22 +165,82 @@ describe('resolveSteps', () => {
 });
 
 describe('buildTimeline', () => {
-  test('reproduces the PRD worked example frame for frame', async () => {
+  test('reproduces the PRD worked example', async () => {
     const path = await build(
       'Start from space, zoom into Japan.\nHold for 3 seconds.\nThen fly to Mount Fuji and zoom in close.\nHold for 2 seconds.',
     );
+    // The altitudes are the PRD's; the move durations are worked out from each
+    // move, so the frames they land on are not fixed in advance.
     assert.deepEqual(
-      path.keyframes.map((keyframe) => [keyframe.frame, Math.round(keyframe.camera.altitude)]),
-      [
-        [0, 10_000_000],
-        [120, 800_000],
-        [210, 800_000],
-        [330, 1_500],
-        [390, 1_500],
-      ],
+      path.keyframes.map((keyframe) => Math.round(keyframe.camera.altitude)),
+      [10_000_000, 800_000, 800_000, 1_500, 1_500],
     );
+    // The holds are exactly as commanded: 3 seconds, then 2.
+    const frames = path.keyframes.map((keyframe) => keyframe.frame);
+    assert.equal((frames[2] ?? 0) - (frames[1] ?? 0), 90);
+    assert.equal((frames[4] ?? 0) - (frames[3] ?? 0), 60);
+    assert.deepEqual(frames, [...frames].sort((a, b) => a - b));
+  });
+
+  test('with the durations pinned, the frames are exactly the PRD example', async () => {
+    const path = await build(
+      'Start from space, zoom into Japan.\nHold for 3 seconds.\nThen fly to Mount Fuji and zoom in close.\nHold for 2 seconds.',
+      { defaultTransitionSeconds: 4 },
+    );
+    assert.deepEqual(path.keyframes.map((keyframe) => keyframe.frame), [0, 120, 210, 330, 390]);
     assert.equal(path.totalFrames, 391);
     assert.equal(path.durationSeconds, 13);
+  });
+
+  test('a long move takes longer than a short one, without being asked', async () => {
+    const short = await build('fly to Tokyo. fly to Kyoto');
+    const long = await build('fly to Tokyo. fly to Lima');
+    const lastOf = (p: CameraPath): number => (p.steps.at(-1)?.duration ?? 0);
+    assert.ok(lastOf(long) > lastOf(short) + 1, `${lastOf(short)}s then ${lastOf(long)}s`);
+    assert.equal(short.steps.at(-1)?.durationSource, 'automatic');
+  });
+
+  test('the camera looks down from orbit and angles in close', async () => {
+    const path = await build('start from space, zoom into Japan. then fly to Mount Fuji and zoom in close');
+    assert.equal(path.keyframes[0]?.camera.tilt, 0);
+    assert.ok((path.keyframes.at(-1)?.camera.tilt ?? 0) >= 50, 'a close pass should be angled');
+    assert.equal(path.steps.at(-1)?.tiltSource, 'automatic');
+  });
+
+  test('a tilt in the command wins and carries forward', async () => {
+    const path = await build('fly to Tokyo with tilt 30. then fly to Kyoto');
+    assert.equal(path.steps[1]?.tilt, 30);
+    assert.equal(path.steps[1]?.tiltSource, 'explicit');
+    assert.equal(path.steps[2]?.tilt, 30, 'an angle named once should hold');
+  });
+
+  test('"slowly" and "quickly" stretch and shorten the moves', async () => {
+    const plain = await build('fly to Tokyo. fly to Kyoto');
+    const slow = await build('fly to Tokyo. slowly fly to Kyoto');
+    const quick = await build('fly to Tokyo. quickly fly to Kyoto');
+    const last = (p: CameraPath): number => p.steps.at(-1)?.duration ?? 0;
+    assert.ok(last(slow) > last(plain), `${last(plain)}s then ${last(slow)}s`);
+    assert.ok(last(quick) < last(plain), `${last(plain)}s then ${last(quick)}s`);
+  });
+
+  test('the lens is left alone unless the command names one', async () => {
+    const untouched = await build('fly to Tokyo');
+    assert.equal(untouched.writeFieldOfView, false);
+
+    const named = await build('fly to Tokyo with field of view 30');
+    assert.equal(named.writeFieldOfView, true);
+    assert.equal(named.keyframes.at(-1)?.camera.fieldOfView, 30);
+  });
+
+  test('a lens named part-way through applies from the first keyframe', async () => {
+    // Otherwise the shot opens at the default 60 and zooms to 30 on its own -
+    // a lens move nobody asked for.
+    const path = await build('fly to Tokyo. then fly to Kyoto with field of view 30');
+    assert.equal(path.writeFieldOfView, true);
+    assert.deepEqual(
+      path.keyframes.map((keyframe) => keyframe.camera.fieldOfView),
+      path.keyframes.map(() => 30),
+    );
   });
 
   test('holds repeat the previous camera exactly, so nothing drifts', async () => {

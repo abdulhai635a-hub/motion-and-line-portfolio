@@ -26,6 +26,7 @@
     width: 100%; background: #2b2b2b; color: #e8eaed;
     border: 1px solid #3c4043; border-radius: 6px; padding: 6px; font: inherit;
   }
+  input[type="number"]::placeholder { color: #7a7f85; font-style: italic; }
   .check { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #9aa0a6; }
   .check input { accent-color: #8ab4f8; }
   .buttons { display: flex; gap: 8px; margin-top: 14px; }
@@ -62,14 +63,18 @@
 
   <details>
     <summary>Settings</summary>
+    <p class="hint">Leave these empty. The move length, the tilt and the lens are worked out
+      from your command - say <code>slowly</code>, <code>for 6 seconds</code>, <code>tilt 45</code>
+      or <code>field of view 30</code> and it follows you. Fill a box only to force one value on
+      every step.</p>
     <div class="row">
       <div><label for="fps">Frame rate</label><input id="fps" type="number" value="30" min="1" max="240"></div>
-      <div><label for="transition">Move (s)</label><input id="transition" type="number" value="4" min="0.1" step="0.1"></div>
-      <div><label for="hold">Hold (s)</label><input id="hold" type="number" value="2" min="0.1" step="0.1"></div>
+      <div><label for="transition">Move (s)</label><input id="transition" type="number" placeholder="Auto" min="0.1" step="0.1"></div>
+      <div><label for="hold">Hold (s)</label><input id="hold" type="number" placeholder="Auto" min="0.1" step="0.1"></div>
     </div>
     <div class="row">
-      <div><label for="tilt">Tilt (deg)</label><input id="tilt" type="number" value="0" step="1"></div>
-      <div><label for="fov">Field of view</label><input id="fov" type="number" value="60" min="1" max="180"></div>
+      <div><label for="tilt">Tilt (deg)</label><input id="tilt" type="number" placeholder="Auto" step="1"></div>
+      <div><label for="fov">Field of view</label><input id="fov" type="number" placeholder="Project's own" min="1" max="180"></div>
     </div>
     <label class="check"><input id="online" type="checkbox"> Look unknown places up on OpenStreetMap</label>
     <p class="hint">Without this, places come from the built-in table of about 220 countries, cities and landmarks.</p>

@@ -228,7 +228,7 @@
     if (node) node.addEventListener('click', handler);
   };
   bind('click:jumpWorkspaceStart', function () { frame = 0; setTimeout(draw, 30); });
-  bind('click:jumpWorkspaceEnd', function () { frame = 450; setTimeout(draw, 30); });
+  bind('click:jumpWorkspaceEnd', function () { frame = window.__lastFrame || LAST_FRAME; setTimeout(draw, 30); });
   bind('click:forward', function () { move(1); });
   bind('click:backward', function () { move(-1); });
   // Keyboard handling can be switched off, to stand in for a session where the
@@ -239,7 +239,9 @@
   // The key behaviour observed on the live editor: arrows step one frame,
   // Shift+arrow steps five, Home and End jump to the ends. The readout updates
   // asynchronously there, so it does here too.
-  var LAST_FRAME = 450;
+  // Long enough for a multi-place path; window.__lastFrame shortens it so the
+  // too-long-for-the-project case can be tested.
+  var LAST_FRAME = 1200;
   document.addEventListener('keydown', function (event) {
     if (document.querySelector('[contenteditable]')) return;
     if (!window.__keyboardEnabled) return;
@@ -247,9 +249,9 @@
     if (event.key === 'ArrowRight' || event.key === 'PageUp') frame += step;
     else if (event.key === 'ArrowLeft' || event.key === 'PageDown') frame -= step;
     else if (event.key === 'Home') frame = 0;
-    else if (event.key === 'End') frame = LAST_FRAME;
+    else if (event.key === 'End') frame = window.__lastFrame || LAST_FRAME;
     else return;
-    frame = Math.max(0, Math.min(LAST_FRAME, frame));
+    frame = Math.max(0, Math.min(window.__lastFrame || LAST_FRAME, frame));
     event.preventDefault();
     setTimeout(draw, 30);
   });

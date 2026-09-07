@@ -127,6 +127,22 @@ export async function seekToFrame(page: PageLike, frame: number, options: SeekOp
     if (landed === frame) return { from, to: landed, presses, corrected: true };
   }
 
+  // A path longer than the project cannot be reached at all, and that is worth
+  // saying plainly: the fix is to lengthen the timeline, not to debug a seek.
+  if (landed < frame) {
+    const lastFrame = await findLastFrame(page, readout, settleMs);
+    // A zero here means End did nothing either, which says the keyboard is dead
+    // rather than the project short; that is the generic failure below.
+    if (lastFrame !== null && lastFrame > 0 && lastFrame < frame) {
+      throw new AgentError('DRIVER_FRAME_SEEK_FAILED', `This path needs frame ${frame}, past the end of the project.`, {
+        detail: `The timeline ends at frame ${lastFrame}.`,
+        hint:
+          `Lengthen the project in Earth Studio, or shorten the path - ` +
+          `a higher frame rate or shorter holds will both bring it in.`,
+      });
+    }
+  }
+
   throw new AgentError('DRIVER_FRAME_SEEK_FAILED', `The playhead would not move to frame ${frame}.`, {
     detail: `It sits at frame ${landed} after ${presses} attempts.`,
     hint: 'Run "earth-studio-agent probe --playhead" to see what the timeline controls are doing.',
@@ -151,6 +167,19 @@ async function step(page: PageLike, delta: number, maxPresses: number): Promise<
   for (let press = 0; press < coarse; press += 1) await page.keyboard.press(coarseKey);
   for (let press = 0; press < fine; press += 1) await page.keyboard.press(fineKey);
   return total;
+}
+
+/** The last frame of the project, found with End. Null when it cannot be read. */
+async function findLastFrame(page: PageLike, readout: string, settleMs: number): Promise<number | null> {
+  if (page.keyboard === undefined) return null;
+  try {
+    await releaseFocus(page);
+    await page.keyboard.press('End');
+    await pause(settleMs);
+    return await readFrame(page, readout, settleMs);
+  } catch {
+    return null;
+  }
 }
 
 /** Clicks the jump-to-start control, falling back to the Home key. */

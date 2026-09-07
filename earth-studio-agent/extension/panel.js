@@ -13,6 +13,12 @@
     const value = Number.parseFloat($(id).value);
     return Number.isFinite(value) ? value : fallback;
   }
+  function overrideOf(id) {
+    const raw = $(id).value.trim();
+    if (raw === "") return void 0;
+    const value = Number.parseFloat(raw);
+    return Number.isFinite(value) ? value : void 0;
+  }
   function say(text, kind = "") {
     status.textContent = text;
     status.className = kind;
@@ -81,10 +87,10 @@
           online: $("online").checked,
           config: {
             frameRate: numberOf("fps", 30),
-            defaultTransitionSeconds: numberOf("transition", 4),
-            defaultHoldSeconds: numberOf("hold", 2),
-            defaultTilt: numberOf("tilt", 0),
-            defaultFieldOfView: numberOf("fov", 60)
+            defaultTransitionSeconds: overrideOf("transition"),
+            defaultHoldSeconds: overrideOf("hold"),
+            defaultTilt: overrideOf("tilt"),
+            defaultFieldOfView: overrideOf("fov")
           }
         }
       });

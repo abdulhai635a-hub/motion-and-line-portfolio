@@ -50,6 +50,19 @@ function numberOf(id: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * A setting the user left blank. Blank is the normal state: the agent works the
+ * move length, the tilt and the lens out from the command itself, and naming
+ * one of them here is what turns that off. So an empty box must reach the agent
+ * as "not set", never as a number this panel invented.
+ */
+function overrideOf(id: string): number | undefined {
+  const raw = $<HTMLInputElement>(id).value.trim();
+  if (raw === '') return undefined;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
 function say(text: string, kind: '' | 'ok' | 'error' = ''): void {
   status.textContent = text;
   status.className = kind;
@@ -135,10 +148,10 @@ async function send(dryRun: boolean): Promise<void> {
         online: $<HTMLInputElement>('online').checked,
         config: {
           frameRate: numberOf('fps', 30),
-          defaultTransitionSeconds: numberOf('transition', 4),
-          defaultHoldSeconds: numberOf('hold', 2),
-          defaultTilt: numberOf('tilt', 0),
-          defaultFieldOfView: numberOf('fov', 60),
+          defaultTransitionSeconds: overrideOf('transition'),
+          defaultHoldSeconds: overrideOf('hold'),
+          defaultTilt: overrideOf('tilt'),
+          defaultFieldOfView: overrideOf('fov'),
         },
       },
     });

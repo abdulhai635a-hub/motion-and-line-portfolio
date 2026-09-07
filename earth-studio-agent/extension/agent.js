@@ -52,6 +52,65 @@ var EarthStudioAgent = (() => {
     }
   };
 
+  // src/smart.ts
+  var DEFAULT_AUTO_DURATION = {
+    base: 2.5,
+    perDistance: 1.2,
+    perAltitude: 0.9,
+    min: 2,
+    max: 10
+  };
+  function groundDistanceKm(from, to) {
+    const earthRadiusKm = 6371;
+    const toRadians = (degrees) => degrees * Math.PI / 180;
+    const deltaLat = toRadians(to.latitude - from.latitude);
+    const deltaLon = toRadians(to.longitude - from.longitude);
+    const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(toRadians(from.latitude)) * Math.cos(toRadians(to.latitude)) * Math.sin(deltaLon / 2) ** 2;
+    return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+  function smartDuration(from, to, settings = DEFAULT_AUTO_DURATION) {
+    const distanceKm = groundDistanceKm(from, to);
+    const high = Math.max(from.altitude, to.altitude);
+    const low = Math.max(1, Math.min(from.altitude, to.altitude));
+    const altitudeRatio = high / low;
+    const seconds = settings.base + settings.perDistance * Math.log10(1 + distanceKm) + settings.perAltitude * Math.log10(Math.max(1, altitudeRatio));
+    return round(clamp(seconds, settings.min, settings.max), 2);
+  }
+  var TILT_BY_ALTITUDE = [
+    [1e7, 0],
+    [8e5, 8],
+    [15e4, 25],
+    [15e3, 40],
+    [1500, 60],
+    [150, 75]
+  ];
+  function smartTilt(altitudeMetres) {
+    const altitude = Math.max(1, altitudeMetres);
+    const first = TILT_BY_ALTITUDE[0];
+    const last = TILT_BY_ALTITUDE.at(-1);
+    if (first === void 0 || last === void 0) return 0;
+    if (altitude >= first[0]) return first[1];
+    if (altitude <= last[0]) return last[1];
+    for (let index = 0; index < TILT_BY_ALTITUDE.length - 1; index += 1) {
+      const upper = TILT_BY_ALTITUDE[index];
+      const lower = TILT_BY_ALTITUDE[index + 1];
+      if (upper === void 0 || lower === void 0) continue;
+      if (altitude <= upper[0] && altitude >= lower[0]) {
+        const span = Math.log10(upper[0]) - Math.log10(lower[0]);
+        const position = (Math.log10(upper[0]) - Math.log10(altitude)) / span;
+        return round(upper[1] + position * (lower[1] - upper[1]), 1);
+      }
+    }
+    return 0;
+  }
+  function clamp(value, low, high) {
+    return Math.min(high, Math.max(low, value));
+  }
+  function round(value, digits) {
+    const factor = 10 ** digits;
+    return Math.round(value * factor) / factor;
+  }
+
   // src/config.ts
   var DEFAULT_ALTITUDE_TABLE = {
     space: 1e7,
@@ -75,6 +134,10 @@ var EarthStudioAgent = (() => {
     defaultTransitionSeconds: 4,
     defaultHoldSeconds: 2,
     startAltitude: DEFAULT_ALTITUDE_TABLE.space,
+    automaticTiming: true,
+    automaticTilt: true,
+    autoDuration: { ...DEFAULT_AUTO_DURATION },
+    writeFieldOfView: false,
     defaultTilt: 0,
     defaultPan: 0,
     defaultRoll: 0,
@@ -84,14 +147,21 @@ var EarthStudioAgent = (() => {
     ambiguityRatio: 0.6
   };
   function makeConfig(overrides = {}) {
+    const automatic = {
+      automaticTiming: overrides.defaultTransitionSeconds === void 0,
+      automaticTilt: overrides.defaultTilt === void 0,
+      writeFieldOfView: overrides.defaultFieldOfView !== void 0
+    };
     const config = {
       ...DEFAULT_CONFIG,
+      ...automatic,
       ...stripUndefined(overrides),
       altitudeTable: { ...DEFAULT_CONFIG.altitudeTable, ...stripUndefined(overrides.altitudeTable ?? {}) },
       descriptorByPlaceKind: {
         ...DEFAULT_CONFIG.descriptorByPlaceKind,
         ...stripUndefined(overrides.descriptorByPlaceKind ?? {})
-      }
+      },
+      autoDuration: { ...DEFAULT_CONFIG.autoDuration, ...stripUndefined(overrides.autoDuration ?? {}) }
     };
     validateConfig(config);
     return config;
@@ -113,6 +183,18 @@ var EarthStudioAgent = (() => {
       if (!Number.isFinite(altitude) || altitude <= 0) {
         throw new AgentError("INVALID_CONFIG", `altitudeTable.${descriptor} must be a positive number, got ${altitude}`);
       }
+    }
+    for (const key of ["base", "min", "max"]) {
+      const value = config.autoDuration[key];
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new AgentError("INVALID_CONFIG", `autoDuration.${key} must be a positive number, got ${value}`);
+      }
+    }
+    if (config.autoDuration.min > config.autoDuration.max) {
+      throw new AgentError(
+        "INVALID_CONFIG",
+        `autoDuration.min (${config.autoDuration.min}) is above autoDuration.max (${config.autoDuration.max})`
+      );
     }
     if (!Number.isFinite(config.ambiguityRatio) || config.ambiguityRatio <= 0 || config.ambiguityRatio > 1) {
       throw new AgentError("INVALID_CONFIG", `ambiguityRatio must be within (0, 1], got ${config.ambiguityRatio}`);
@@ -558,6 +640,23 @@ var EarthStudioAgent = (() => {
     "back",
     "again"
   ]);
+  var TILT_NUMBER = /\btilt(?:ed)?\s+(?:to\s+)?(-?[0-9]+(?:\.[0-9]+)?)\s*(?:deg|degs|degree|degrees)?\b/;
+  var TILT_PHRASES = [
+    [/\b(?:top[\s-]?down|straight[\s-]down|overhead|nadir|bird'?s?[\s-]?eye)\b/, 0],
+    [/\b(?:angled|oblique|cinematic|dramatic|tilted)\b/, 45],
+    [/\b(?:horizon|horizontal|eye[\s-]?level)\b/, 80]
+  ];
+  var FOV_NUMBER = /\b(?:field[\s-]of[\s-]view|fov|lens)\s+(?:of\s+)?([0-9]+(?:\.[0-9]+)?)\s*(?:deg|degree|degrees)?\b/;
+  var FOV_PHRASES = [
+    [/\bwide[\s-]?angle\b/, 90],
+    [/\b(?:telephoto|narrow[\s-]?angle)\b/, 20]
+  ];
+  var SPEED_PHRASES = [
+    [/\b(?:very\s+slowly|really\s+slowly)\b/, 2.2],
+    [/\b(?:slowly|slow|gently|gradually|leisurely)\b/, 1.6],
+    [/\b(?:very\s+quickly|really\s+fast)\b/, 0.4],
+    [/\b(?:quickly|quick|fast|rapidly|snap|snappy|briskly)\b/, 0.6]
+  ];
   var DOT_GUARD = "~d0t~";
   function parseCommand(command) {
     if (typeof command !== "string" || command.trim() === "") {
@@ -569,21 +668,31 @@ var EarthStudioAgent = (() => {
     const { text, restore } = protectAndPlaces(withoutThousands);
     const steps = [];
     const ignored = [];
+    const pending = [];
     for (const sentence of splitSentences(text)) {
       let mergeTarget = null;
       for (const rawClause of splitClauses(sentence)) {
         const clause = restore(rawClause).trim();
         if (clause === "") continue;
-        const parsed = parseClause(clause);
-        if (parsed === null) {
+        const result = parseClause(clause);
+        if (result === null) {
           ignored.push(clause);
           continue;
         }
+        if (result.kind === "modifier") {
+          const target = mergeTarget ?? steps.at(-1) ?? null;
+          if (target === null) pending.push(result.fields);
+          else mergeInto(target, result.fields);
+          continue;
+        }
+        const parsed = result.step;
         if (mergeTarget !== null && parsed.placeQuery === null && parsed.action !== "hold" && mergeTarget.action !== "hold") {
           mergeInto(mergeTarget, parsed);
           continue;
         }
         const step2 = { ...parsed, index: steps.length + 1 };
+        for (const waiting of pending) backfill(step2, waiting);
+        pending.length = 0;
         steps.push(step2);
         mergeTarget = step2;
       }
@@ -600,6 +709,9 @@ var EarthStudioAgent = (() => {
     if (extra.zoom !== null) target.zoom = extra.zoom;
     if (extra.altitudeMeters !== null) target.altitudeMeters = extra.altitudeMeters;
     if (extra.durationSeconds !== null) target.durationSeconds = extra.durationSeconds;
+    if (extra.tiltDegrees !== null) target.tiltDegrees = extra.tiltDegrees;
+    if (extra.fieldOfViewDegrees !== null) target.fieldOfViewDegrees = extra.fieldOfViewDegrees;
+    if (extra.speedScale !== null) target.speedScale = extra.speedScale;
     if (target.action === "start") {
     } else if (extra.action === "zoom_in" || extra.action === "zoom_out") {
       if (target.action !== "fly_to" && target.action !== "pan_to") {
@@ -607,6 +719,12 @@ var EarthStudioAgent = (() => {
       }
     }
     target.source = `${target.source} + ${extra.source}`;
+  }
+  function backfill(target, extra) {
+    if (target.tiltDegrees === null) target.tiltDegrees = extra.tiltDegrees;
+    if (target.fieldOfViewDegrees === null) target.fieldOfViewDegrees = extra.fieldOfViewDegrees;
+    if (target.speedScale === null) target.speedScale = extra.speedScale;
+    target.source = `${extra.source} + ${target.source}`;
   }
   function protectAndPlaces(command) {
     const found = [];
@@ -635,6 +753,12 @@ var EarthStudioAgent = (() => {
   function parseClause(clause) {
     const source = clause;
     let working = ` ${clause.toLowerCase().replace(/\s+/g, " ")} `;
+    const tilt = extractTilt(working);
+    working = tilt.rest;
+    const fieldOfView = extractFieldOfView(working);
+    working = fieldOfView.rest;
+    const speed = extractSpeed(working);
+    working = speed.rest;
     const altitude = extractAltitude(working);
     working = altitude.rest;
     const duration = extractDuration(working);
@@ -658,15 +782,51 @@ var EarthStudioAgent = (() => {
     }
     if (zoom === null) zoom = readDescriptor(working);
     const action = verbAction ?? readAction(working, placeQuery !== null, zoom);
-    if (action === null) return null;
-    return {
-      action,
+    const fields = {
       placeQuery,
       zoom,
       altitudeMeters: altitude.value,
       durationSeconds: duration.value,
+      tiltDegrees: tilt.value,
+      fieldOfViewDegrees: fieldOfView.value,
+      speedScale: speed.value,
       source
     };
+    if (action !== null) return { kind: "step", step: { ...fields, action } };
+    const setsCamera = tilt.value !== null || fieldOfView.value !== null || speed.value !== null;
+    if (setsCamera && placeQuery === null) return { kind: "modifier", fields };
+    return null;
+  }
+  function extractTilt(text) {
+    const numbered = text.match(TILT_NUMBER);
+    if (numbered) {
+      const value = Number.parseFloat(numbered[1] ?? "");
+      if (Number.isFinite(value)) return { value, rest: text.replace(numbered[0], " ") };
+    }
+    for (const [pattern, degrees] of TILT_PHRASES) {
+      const match = text.match(pattern);
+      if (match) return { value: degrees, rest: text.replace(match[0], " ") };
+    }
+    return { value: null, rest: text };
+  }
+  function extractFieldOfView(text) {
+    const numbered = text.match(FOV_NUMBER);
+    if (numbered) {
+      const value = Number.parseFloat(numbered[1] ?? "");
+      if (Number.isFinite(value) && value > 0) return { value, rest: text.replace(numbered[0], " ") };
+    }
+    for (const [pattern, degrees] of FOV_PHRASES) {
+      const match = text.match(pattern);
+      if (match) return { value: degrees, rest: text.replace(match[0], " ") };
+    }
+    return { value: null, rest: text };
+  }
+  function extractSpeed(text) {
+    for (const [pattern, scale] of SPEED_PHRASES) {
+      const match = text.match(pattern);
+      if (match) return { value: scale, rest: text.replace(match[0], " ") };
+    }
+    return { value: null, rest: text };
   }
   var ALTITUDE_UNITS = Object.keys(METRES_PER_UNIT).sort((a, b) => b.length - a.length).join("|");
   var ALTITUDE_STRICT = new RegExp(
@@ -680,7 +840,7 @@ var EarthStudioAgent = (() => {
     const amount = Number.parseFloat((match[1] ?? "").replace(/,/g, ""));
     const factor = METRES_PER_UNIT[match[2] ?? ""];
     if (!Number.isFinite(amount) || factor === void 0) return { value: null, rest: text };
-    return { value: round(amount * factor, 3), rest: text.replace(match[0], " ") };
+    return { value: round2(amount * factor, 3), rest: text.replace(match[0], " ") };
   }
   var DURATION_UNITS = Object.keys(SECONDS_PER_UNIT).sort((a, b) => b.length - a.length).join("|");
   var WORD_NUMBER_KEYS = Object.keys(WORD_NUMBERS).sort((a, b) => b.length - a.length).join("|");
@@ -696,7 +856,7 @@ var EarthStudioAgent = (() => {
     if (amount === void 0 || !Number.isFinite(amount) || factor === void 0) {
       return { value: null, rest: text };
     }
-    return { value: round(amount * factor, 3), rest: text.replace(match[0], " ") };
+    return { value: round2(amount * factor, 3), rest: text.replace(match[0], " ") };
   }
   function extractPlace(text) {
     const match = PLACE_PREPOSITION.exec(text);
@@ -761,7 +921,7 @@ var EarthStudioAgent = (() => {
     if (zoom !== null) return "zoom_in";
     return null;
   }
-  function round(value, digits) {
+  function round2(value, digits) {
     const factor = 10 ** digits;
     return Math.round(value * factor) / factor;
   }
@@ -777,6 +937,9 @@ var EarthStudioAgent = (() => {
       zoom: null,
       altitudeMeters: null,
       durationSeconds: null,
+      tiltDegrees: null,
+      fieldOfViewDegrees: null,
+      speedScale: null,
       source: "(implicit establishing pose)"
     }, ...parsed] : [...parsed];
     steps.forEach((step2, i) => {
@@ -801,6 +964,9 @@ var EarthStudioAgent = (() => {
     }
     const resolved = [];
     let previousAltitude = null;
+    let stickyTilt = null;
+    let stickyFieldOfView = null;
+    let stickySpeed = null;
     for (let i = 0; i < steps.length; i += 1) {
       const step2 = steps[i];
       if (step2 === void 0) continue;
@@ -824,7 +990,12 @@ var EarthStudioAgent = (() => {
         });
       }
       const altitude = decideAltitude(step2, place.kind, previousAltitude, config);
-      const duration = decideDuration(step2, config);
+      if (step2.tiltDegrees !== null) stickyTilt = step2.tiltDegrees;
+      if (step2.fieldOfViewDegrees !== null) stickyFieldOfView = step2.fieldOfViewDegrees;
+      if (step2.speedScale !== null) stickySpeed = step2.speedScale;
+      const previous = resolved.at(-1);
+      const duration = decideDuration(step2, config, previous, { ...place, altitude: altitude.value }, stickySpeed);
+      const tilt = decideTilt(stickyTilt, altitude.value, config);
       resolved.push({
         index: step2.index,
         action: step2.action,
@@ -833,10 +1004,20 @@ var EarthStudioAgent = (() => {
         duration: duration.value,
         altitudeSource: altitude.source,
         durationSource: duration.source,
+        tilt: tilt.value,
+        tiltSource: tilt.source,
+        fieldOfView: stickyFieldOfView,
         zoom: step2.zoom,
         source: step2.source
       });
       previousAltitude = altitude.value;
+    }
+    const firstLens = resolved.find((step2) => step2.fieldOfView !== null)?.fieldOfView ?? null;
+    if (firstLens !== null) {
+      for (const step2 of resolved) {
+        if (step2.fieldOfView === null) step2.fieldOfView = firstLens;
+        else break;
+      }
     }
     return { steps: resolved, warnings };
   }
@@ -885,7 +1066,12 @@ var EarthStudioAgent = (() => {
     const smaller = ladder.find((value) => value < current * 0.999);
     return smaller ?? current / 10;
   }
-  function decideDuration(step2, config) {
+  function decideTilt(explicit, altitude, config) {
+    if (explicit !== null) return { value: explicit, source: "explicit" };
+    if (config.automaticTilt) return { value: smartTilt(altitude), source: "automatic" };
+    return { value: config.defaultTilt, source: "default" };
+  }
+  function decideDuration(step2, config, previous, here, speedScale) {
     if (step2.durationSeconds !== null) {
       if (!Number.isFinite(step2.durationSeconds) || step2.durationSeconds <= 0) {
         throw new AgentError("INVALID_DURATION", `Step ${step2.index} asks for a duration of ${step2.durationSeconds}s.`, {
@@ -896,8 +1082,24 @@ var EarthStudioAgent = (() => {
       return { value: step2.durationSeconds, source: "explicit" };
     }
     if (step2.action === "start") return { value: 0, source: "default" };
-    const value = step2.action === "hold" ? config.defaultHoldSeconds : config.defaultTransitionSeconds;
-    return { value, source: "default" };
+    const scale = speedScale ?? 1;
+    if (step2.action === "hold") {
+      return { value: round3(config.defaultHoldSeconds * scale, 2), source: scale === 1 ? "default" : "automatic" };
+    }
+    const from = previous?.place;
+    if (config.automaticTiming && previous !== void 0 && from !== null && from !== void 0) {
+      const seconds = smartDuration(
+        { latitude: from.latitude, longitude: from.longitude, altitude: previous.altitude },
+        here,
+        config.autoDuration
+      );
+      return { value: round3(seconds * scale, 2), source: "automatic" };
+    }
+    return { value: round3(config.defaultTransitionSeconds * scale, 2), source: scale === 1 ? "default" : "automatic" };
+  }
+  function round3(value, digits) {
+    const factor = 10 ** digits;
+    return Math.round(value * factor) / factor;
   }
   function buildTimeline(resolved, config, command, warnings = []) {
     if (resolved.length === 0) {
@@ -939,6 +1141,7 @@ var EarthStudioAgent = (() => {
       height: config.height,
       totalFrames: lastFrame + 1,
       durationSeconds: Number((lastFrame / config.frameRate).toFixed(3)),
+      writeFieldOfView: config.writeFieldOfView || resolved.some((step2) => step2.fieldOfView !== null),
       steps: resolved,
       keyframes,
       warnings: allWarnings
@@ -954,9 +1157,9 @@ var EarthStudioAgent = (() => {
       longitude: place.longitude,
       altitude: step2.altitude,
       pan: config.defaultPan,
-      tilt: config.defaultTilt,
+      tilt: step2.tilt,
       roll: config.defaultRoll,
-      fieldOfView: config.defaultFieldOfView
+      fieldOfView: step2.fieldOfView ?? config.defaultFieldOfView
     };
     return {
       frame,
@@ -1497,6 +1700,15 @@ var EarthStudioAgent = (() => {
       landed = await readFrame(page, readout, settleMs);
       if (landed === frame) return { from, to: landed, presses, corrected: true };
     }
+    if (landed < frame) {
+      const lastFrame = await findLastFrame(page, readout, settleMs);
+      if (lastFrame !== null && lastFrame > 0 && lastFrame < frame) {
+        throw new AgentError("DRIVER_FRAME_SEEK_FAILED", `This path needs frame ${frame}, past the end of the project.`, {
+          detail: `The timeline ends at frame ${lastFrame}.`,
+          hint: `Lengthen the project in Earth Studio, or shorten the path - a higher frame rate or shorter holds will both bring it in.`
+        });
+      }
+    }
     throw new AgentError("DRIVER_FRAME_SEEK_FAILED", `The playhead would not move to frame ${frame}.`, {
       detail: `It sits at frame ${landed} after ${presses} attempts.`,
       hint: 'Run "earth-studio-agent probe --playhead" to see what the timeline controls are doing.'
@@ -1519,6 +1731,17 @@ var EarthStudioAgent = (() => {
     for (let press = 0; press < coarse; press += 1) await page.keyboard.press(coarseKey);
     for (let press = 0; press < fine; press += 1) await page.keyboard.press(fineKey);
     return total;
+  }
+  async function findLastFrame(page, readout, settleMs) {
+    if (page.keyboard === void 0) return null;
+    try {
+      await releaseFocus(page);
+      await page.keyboard.press("End");
+      await pause(settleMs);
+      return await readFrame(page, readout, settleMs);
+    } catch {
+      return null;
+    }
   }
   async function jumpToStart(page, settleMs) {
     if (typeof page.click === "function") {
@@ -1633,7 +1856,7 @@ var EarthStudioAgent = (() => {
       const results = [];
       for (const keyframe of path.keyframes) {
         try {
-          results.push(await this.applyKeyframe(keyframe));
+          results.push(await this.applyKeyframe(keyframe, { writeFieldOfView: path.writeFieldOfView }));
         } catch (cause) {
           const result = {
             frame: keyframe.frame,
@@ -1667,7 +1890,7 @@ var EarthStudioAgent = (() => {
       return { total: path.keyframes.length, applied: results.length - failures.length, results, failures };
     }
     /** Seeks to one frame and writes the whole camera state there. */
-    async applyKeyframe(keyframe) {
+    async applyKeyframe(keyframe, options = {}) {
       await seekToFrame(this.page, keyframe.frame, {
         readout: this.selectors.playhead.readout.candidates[0],
         settleMs: this.settleMs
@@ -1678,6 +1901,10 @@ var EarthStudioAgent = (() => {
       const details = [];
       for (const name of CAMERA_FIELD_ORDER) {
         const attribute = this.selectors.camera[name];
+        if (name === "fieldOfView" && options.writeFieldOfView !== true) {
+          skipped.push(name);
+          continue;
+        }
         if (!await this.isUsable(widgetSelector(attribute))) {
           if (attribute.required) {
             throw new AgentError("DRIVER_FIELD_WRITE_FAILED", `The ${attribute.label} row cannot be edited.`, {

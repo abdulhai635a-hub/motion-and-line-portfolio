@@ -188,4 +188,39 @@ describe('parseCommand', () => {
     const { steps } = parseCommand('fly to Rome. hold 2s. fly to Paris. hold 1s');
     assert.deepEqual(steps.map((step) => step.index), [1, 2, 3, 4]);
   });
+
+  test('a trailing "tilt 45" changes the move it follows, instead of being dropped', () => {
+    // The comma splits this into two clauses; the second names no move, so it
+    // used to be reported as text that could not be interpreted.
+    const { steps, ignored } = parseCommand('fly to Rome, tilt 45');
+    assert.deepEqual(ignored, []);
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0]?.action, 'fly_to');
+    assert.equal(steps[0]?.tiltDegrees, 45);
+  });
+
+  test('an angle or a pace in its own sentence lands on the step before it', () => {
+    const { steps, ignored } = parseCommand('fly to Rome. Slowly. Then fly to Paris.');
+    assert.deepEqual(ignored, []);
+    assert.equal(steps.length, 2);
+    assert.equal(steps[0]?.speedScale, 1.6);
+    assert.equal(steps[1]?.speedScale, null);
+  });
+
+  test('a setting written before any move waits for the first one', () => {
+    const { steps, ignored } = parseCommand('Very slowly. Fly to Rome.');
+    assert.deepEqual(ignored, []);
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0]?.speedScale, 2.2);
+  });
+
+  test('a step\'s own words beat a setting that preceded it', () => {
+    const { steps } = parseCommand('tilt 45. fly to Rome, tilt 20.');
+    assert.equal(steps[0]?.tiltDegrees, 20);
+  });
+
+  test('still ignores a clause that names nothing at all', () => {
+    const { ignored } = parseCommand('fly to Rome, of the');
+    assert.deepEqual(ignored, ['of the']);
+  });
 });

@@ -47,8 +47,11 @@ export function renderPathLog(path: CameraPath): string {
         `${String(keyframe.stepIndex).padStart(4)}  ${camera.latitude.toFixed(6).padStart(12)}  ` +
         `${camera.longitude.toFixed(6).padStart(12)}  ${camera.altitude.toFixed(2).padStart(14)}  ` +
         `${camera.pan.toFixed(1).padStart(6)}  ${camera.tilt.toFixed(1).padStart(6)}  ` +
-        `${camera.roll.toFixed(1).padStart(6)}  ${camera.fieldOfView.toFixed(1).padStart(6)}  ${keyframe.label}`,
+        `${camera.roll.toFixed(1).padStart(6)}  ${fieldOfViewCell(path, camera.fieldOfView)}  ${keyframe.label}`,
     );
+  }
+  if (!path.writeFieldOfView) {
+    lines.push("  fov is left as the project has it - name one (\"field of view 30\") to set it.");
   }
 
   const warnings = path.warnings;
@@ -60,6 +63,11 @@ export function renderPathLog(path: CameraPath): string {
 
   lines.push('');
   return lines.join('\n');
+}
+
+/** The lens is only ours to report when the command asked for one. */
+function fieldOfViewCell(path: CameraPath, value: number): string {
+  return (path.writeFieldOfView ? value.toFixed(1) : '-').padStart(6);
 }
 
 export function formatWarning(warning: Warning): string {

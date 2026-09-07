@@ -3,6 +3,7 @@
  * Reference: PRD 6 ("Session Config") and PRD 8 (default zoom/altitude table).
  */
 import { AgentError } from './errors.ts';
+import { DEFAULT_AUTO_DURATION, type AutoDurationSettings } from './smart.ts';
 import type { PlaceKind, ZoomDescriptor } from './types.ts';
 
 /** PRD 8. Metres above ground. Every value is overridable per session. */
@@ -38,6 +39,25 @@ export interface SessionConfig {
   defaultHoldSeconds: number;
   /** Altitude a sequence starts from when the user does not say. */
   startAltitude: number;
+  /**
+   * Work the duration of each move out from the shot instead of using
+   * defaultTransitionSeconds. A hop across a city and a dive from orbit are not
+   * the same length of move.
+   */
+  automaticTiming: boolean;
+  /**
+   * Work the tilt out from the altitude instead of using defaultTilt. Straight
+   * down suits an establishing shot; a close pass wants an angle.
+   */
+  automaticTilt: boolean;
+  /** Tuning for automaticTiming. */
+  autoDuration: AutoDurationSettings;
+  /**
+   * Write the field of view. Off by default: a project has its own lens - a
+   * live one was set to 20 degrees - and overwriting it silently changes the
+   * look of every shot. A command that names a field of view turns this on.
+   */
+  writeFieldOfView: boolean;
   /** Camera attributes the v1 grammar does not expose. */
   defaultTilt: number;
   defaultPan: number;
@@ -59,6 +79,10 @@ export const DEFAULT_CONFIG: SessionConfig = {
   defaultTransitionSeconds: 4,
   defaultHoldSeconds: 2,
   startAltitude: DEFAULT_ALTITUDE_TABLE.space,
+  automaticTiming: true,
+  automaticTilt: true,
+  autoDuration: { ...DEFAULT_AUTO_DURATION },
+  writeFieldOfView: false,
   defaultTilt: 0,
   defaultPan: 0,
   defaultRoll: 0,
@@ -68,16 +92,30 @@ export const DEFAULT_CONFIG: SessionConfig = {
   ambiguityRatio: 0.6,
 };
 
-/** Deep-merges a partial override onto the defaults and validates the result. */
+/**
+ * Deep-merges a partial override onto the defaults and validates the result.
+ *
+ * Naming a setting turns off the automatic behaviour it replaces: someone who
+ * passes a move duration means that duration, not a suggestion, and someone who
+ * names a field of view means it to be written. Say nothing and the agent works
+ * all three out from the shot, which is the point.
+ */
 export function makeConfig(overrides: DeepPartial<SessionConfig> = {}): SessionConfig {
+  const automatic = {
+    automaticTiming: overrides.defaultTransitionSeconds === undefined,
+    automaticTilt: overrides.defaultTilt === undefined,
+    writeFieldOfView: overrides.defaultFieldOfView !== undefined,
+  };
   const config: SessionConfig = {
     ...DEFAULT_CONFIG,
+    ...automatic,
     ...stripUndefined(overrides),
     altitudeTable: { ...DEFAULT_CONFIG.altitudeTable, ...stripUndefined(overrides.altitudeTable ?? {}) },
     descriptorByPlaceKind: {
       ...DEFAULT_CONFIG.descriptorByPlaceKind,
       ...stripUndefined(overrides.descriptorByPlaceKind ?? {}),
     },
+    autoDuration: { ...DEFAULT_CONFIG.autoDuration, ...stripUndefined(overrides.autoDuration ?? {}) },
   };
   validateConfig(config);
   return config;
@@ -100,6 +138,18 @@ export function validateConfig(config: SessionConfig): void {
     if (!Number.isFinite(altitude) || altitude <= 0) {
       throw new AgentError('INVALID_CONFIG', `altitudeTable.${descriptor} must be a positive number, got ${altitude}`);
     }
+  }
+  for (const key of ['base', 'min', 'max'] as const) {
+    const value = config.autoDuration[key];
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new AgentError('INVALID_CONFIG', `autoDuration.${key} must be a positive number, got ${value}`);
+    }
+  }
+  if (config.autoDuration.min > config.autoDuration.max) {
+    throw new AgentError(
+      'INVALID_CONFIG',
+      `autoDuration.min (${config.autoDuration.min}) is above autoDuration.max (${config.autoDuration.max})`,
+    );
   }
   if (!Number.isFinite(config.ambiguityRatio) || config.ambiguityRatio <= 0 || config.ambiguityRatio > 1) {
     throw new AgentError('INVALID_CONFIG', `ambiguityRatio must be within (0, 1], got ${config.ambiguityRatio}`);

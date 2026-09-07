@@ -9,7 +9,7 @@
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,11 +20,14 @@ import { findChromium } from './helpers/chromium.ts';
 
 const FIXTURE = pathToFileURL(resolve(import.meta.dirname, 'fixtures/earth-studio-attributes.html')).href;
 const ENTRY = resolve(import.meta.dirname, '../src/extension/run-in-page.ts');
+const PANEL_ENTRY = resolve(import.meta.dirname, '../src/extension/panel.ts');
+const PANEL_HTML = resolve(import.meta.dirname, '../extension/panel.html');
 
 let browser: Browser | undefined;
 let bundle = '';
 let workspace: string | undefined;
 let reason = 'not built';
+let panelUrl = '';
 
 before(async () => {
   try {
@@ -41,6 +44,20 @@ before(async () => {
       logLevel: 'silent',
     });
     bundle = await readFile(outfile, 'utf8');
+
+    // The side panel, built and laid out the way the extension folder is, so
+    // the real panel.html drives the real panel.js.
+    await build({
+      entryPoints: [PANEL_ENTRY],
+      bundle: true,
+      format: 'iife',
+      target: 'chrome120',
+      outfile: join(workspace, 'panel.js'),
+      logLevel: 'silent',
+    });
+    await writeFile(join(workspace, 'panel.html'), await readFile(PANEL_HTML, 'utf8'));
+    panelUrl = pathToFileURL(join(workspace, 'panel.html')).href;
+
     const { chromium } = await import('playwright');
     browser = await chromium.launch({ executablePath: findChromium() });
   } catch (error) {
@@ -192,6 +209,77 @@ describe('the bundle a Chrome extension can actually run', () => {
   });
 });
 
+describe('the side panel, where the settings live', () => {
+  /** The panel with a stubbed extension API, capturing what it sends to the tab. */
+  async function openPanel(): Promise<Page> {
+    assert.ok(browser);
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      const sent: unknown[] = [];
+      (window as unknown as { __sent: unknown[] }).__sent = sent;
+      (window as unknown as { chrome: unknown }).chrome = {
+        tabs: {
+          query: async () => [{ id: 1, url: 'https://earth.google.com/studio/project' }],
+          // Round-tripped through JSON, as Chrome's messaging does, so a key
+          // whose value is undefined arrives as absent - which is the whole
+          // point of leaving a setting blank.
+          sendMessage: async (_tabId: number, message: unknown) => {
+            sent.push(JSON.parse(JSON.stringify(message)));
+            return { ok: true, applied: 0, total: 0, steps: [], warnings: [] };
+          },
+        },
+        runtime: { onMessage: { addListener: () => {} } },
+      };
+    });
+    await page.goto(panelUrl);
+    return page;
+  }
+
+  const settingsSent = async (page: Page): Promise<Record<string, unknown>> => {
+    await page.fill('#command', 'fly to Rome');
+    await page.click('#run');
+    await page.waitForFunction(() => (window as unknown as { __sent: unknown[] }).__sent.length > 0);
+    const [message] = (await page.evaluate(() => (window as unknown as { __sent: unknown[] }).__sent)) as Array<{
+      options: { config: Record<string, unknown> };
+    }>;
+    assert.ok(message);
+    return message.options.config;
+  };
+
+  test('asks for nothing the user did not set, so the agent decides', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await openPanel();
+    // The four settings the panel used to pre-fill. Blank is what makes the
+    // move length, the tilt and the lens follow the command.
+    for (const id of ['transition', 'hold', 'tilt', 'fov']) {
+      assert.equal(await page.inputValue(`#${id}`), '', `#${id} should start empty`);
+    }
+
+    const config = await settingsSent(page);
+    assert.equal(config.frameRate, 30);
+    for (const key of ['defaultTransitionSeconds', 'defaultHoldSeconds', 'defaultTilt', 'defaultFieldOfView']) {
+      assert.ok(!(key in config), `${key} should not have been sent: ${JSON.stringify(config)}`);
+    }
+    await page.close();
+  });
+
+  test('sends a setting the user does fill in', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await openPanel();
+    await page.click('summary'); // the settings are folded away by default
+    await page.fill('#tilt', '45');
+    await page.fill('#fov', '24');
+
+    const config = await settingsSent(page);
+    assert.equal(config.defaultTilt, 45);
+    assert.equal(config.defaultFieldOfView, 24);
+    assert.ok(!('defaultTransitionSeconds' in config), 'an untouched box stays automatic');
+    await page.close();
+  });
+});
+
 describe('running inside the page, as the extension does', () => {
   test('writes the PRD example with no browser automation at all', async (t) => {
     const why = skip();
@@ -201,7 +289,8 @@ describe('running inside the page, as the extension does', () => {
 
     assert.equal(result.applied, 4);
     assert.equal(result.total, 4);
-    assert.deepEqual(result.frames, [0, 120, 210, 330]);
+    assert.equal(result.frames.length, 4);
+    assert.deepEqual(result.frames, [...result.frames].sort((a, b) => a - b));
     // Synthetic clicks and keystrokes have to reach the editor for this to hold.
     assert.deepEqual(result.altitudes, ['10000', '800', '800', '1500']);
     await page.close();

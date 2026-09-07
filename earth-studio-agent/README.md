@@ -184,6 +184,9 @@ The parser is forgiving rather than strict. Each step may name:
 | Action | `zoom in`, `zoom out`, `fly to`, `pan to`, `hold`, `wait`, `start from` |
 | Duration | `3 seconds`, `5 sec`, `2s`, `hold 1.5 seconds`, `for half a second`, `2 minutes` |
 | Zoom level | `close`, `country level`, `street level`, or an explicit `zoom to 500 meters` / `1.5km` / `1000 feet` |
+| Pace | `slowly`, `very slowly`, `quickly`, `fast` — stretches or shortens the move the agent worked out |
+| Tilt | `tilt 45`, `tilt 45 degrees`, `top-down`, `looking straight down`, `angled`, `cinematic`, `towards the horizon` |
+| Lens | `field of view 30`, `fov 24`, `wide angle`, `telephoto` |
 
 Sentences (split on `.`, `;`, `!`, newlines and tabs) separate steps. Within one
 sentence, a clause that names no place refines the one before it, so
@@ -198,6 +201,25 @@ Two conveniences worth knowing:
   `--no-implicit-start`.
 - **A bare `zoom in` / `zoom out`** moves one rung along the altitude table
   below, relative to where the camera already is.
+
+### Move length, tilt and lens set themselves
+
+You do not fill these in. Say nothing and each step is worked out from the shot:
+
+- **Move length** grows with the ground distance travelled and with the change
+  in altitude, on a log scale, then is clamped to 2–10 seconds. A hop across a
+  city is short; a dive from orbit to a street is long. `slowly` multiplies it,
+  `quickly` divides it, and a stated `for 6 seconds` wins outright.
+- **Tilt** follows the altitude: straight down from space, about 25° at region
+  level, 60° on a close pass, 75° at street level — interpolated, not stepped.
+  Name a tilt (`tilt 45`, `angled`) and it holds until you name another.
+- **Field of view is left alone.** A project has its own lens — one live project
+  was set to 20° — so the agent writes it only when you ask for one, and then
+  from that step on.
+
+Pass `--transition`, `--tilt` or `--fov` (or fill the matching box in the
+extension's Settings) only when you want one fixed value on every step; naming a
+setting is what turns its automatic behaviour off.
 
 ## Default zoom/altitude table (PRD 8)
 

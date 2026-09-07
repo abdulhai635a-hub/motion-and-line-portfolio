@@ -35,8 +35,14 @@ export interface ParsedStep {
   zoom: ZoomDescriptor | null;
   /** Explicit altitude override in metres ("zoom to 500 meters"). */
   altitudeMeters: number | null;
-  /** Explicit duration in seconds; null means "use the configured default". */
+  /** Explicit duration in seconds; null means "work it out from the shot". */
   durationSeconds: number | null;
+  /** Explicit tilt in degrees ("tilt 45"); null means "work it out". */
+  tiltDegrees: number | null;
+  /** Explicit field of view; null means "leave the project's lens alone". */
+  fieldOfViewDegrees: number | null;
+  /** "slowly" and "quickly" stretch or shorten whatever duration is chosen. */
+  speedScale: number | null;
   /** The clause this step came from, kept for the human-readable log. */
   source: string;
 }
@@ -85,7 +91,12 @@ export interface ResolvedStep {
   /** How the altitude was decided, for the log. */
   altitudeSource: 'explicit' | 'descriptor' | 'place-kind' | 'inherited';
   /** How the duration was decided, for the log. */
-  durationSource: 'explicit' | 'default';
+  durationSource: 'explicit' | 'automatic' | 'default';
+  /** Tilt written at this step's keyframe. */
+  tilt: number;
+  tiltSource: 'explicit' | 'automatic' | 'default';
+  /** Field of view, when the command asked for one. */
+  fieldOfView: number | null;
   zoom: ZoomDescriptor | null;
   source: string;
 }
@@ -134,6 +145,11 @@ export interface CameraPath {
   height: number;
   totalFrames: number;
   durationSeconds: number;
+  /**
+   * Whether the field of view should be written. False unless the command asked
+   * for one: a project has its own lens and overwriting it changes every shot.
+   */
+  writeFieldOfView: boolean;
   steps: ResolvedStep[];
   keyframes: Keyframe[];
   warnings: Warning[];

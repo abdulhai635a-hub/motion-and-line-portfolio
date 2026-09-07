@@ -179,6 +179,29 @@ describe('seekToFrame', () => {
     await page.close();
   });
 
+  test('says the project is too short when the frame is past its end', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // A project ending at frame 30: no amount of stepping reaches frame 100.
+    await page.evaluate(() => {
+      (window as unknown as { __lastFrame: number }).__lastFrame = 30;
+    });
+
+    await assert.rejects(
+      () => seekToFrame(page as unknown as PageLike, 100),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_FRAME_SEEK_FAILED');
+        assert.match(error.message, /past the end of the project/);
+        assert.match(error.detail ?? '', /ends at frame 30/);
+        assert.match(error.hint ?? '', /Lengthen the project/);
+        return true;
+      },
+    );
+    await page.close();
+  });
+
   test('releaseFocus takes focus off a control', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

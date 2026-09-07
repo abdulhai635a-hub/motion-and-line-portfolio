@@ -60,7 +60,12 @@ describe('cli', () => {
       frameRate: number;
     };
     assert.equal(plan.frameRate, 30);
-    assert.deepEqual(plan.keyframes.map((keyframe) => keyframe.frame), [0, 120, 210, 330]);
+    // Move durations are worked out from each move, so the frames are not fixed
+    // in advance; the commanded hold of 3 seconds is exactly 90 frames.
+    const frames = plan.keyframes.map((keyframe) => keyframe.frame);
+    assert.equal(frames.length, 4);
+    assert.equal((frames[2] ?? 0) - (frames[1] ?? 0), 90);
+    assert.deepEqual(frames, [...frames].sort((a, b) => a - b));
 
     const log = await readFile(`${prefix}.log.txt`, 'utf8');
     assert.match(log, /Mount Fuji/);

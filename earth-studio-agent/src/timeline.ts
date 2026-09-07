@@ -20,6 +20,7 @@ import type {
 import type { SessionConfig } from './config.ts';
 import { AgentError } from './errors.ts';
 import type { Geocoder } from './geocode/index.ts';
+import { smartDuration, smartTilt } from './smart.ts';
 
 export interface ResolveResult {
   steps: ResolvedStep[];
@@ -59,6 +60,9 @@ export async function resolveSteps(
           zoom: null,
           altitudeMeters: null,
           durationSeconds: null,
+          tiltDegrees: null,
+          fieldOfViewDegrees: null,
+          speedScale: null,
           source: '(implicit establishing pose)',
         }, ...parsed]
       : [...parsed];
@@ -88,9 +92,14 @@ export async function resolveSteps(
     }
   }
 
-  // Pass 2: fill in places, altitudes and durations in order.
+  // Pass 2: fill in places, altitudes, angles and durations in order.
   const resolved: ResolvedStep[] = [];
   let previousAltitude: number | null = null;
+  // An angle, lens or pace named once holds until it is named again, which is
+  // how people write: "then fly to Kyoto, slowly" means the rest is slow too.
+  let stickyTilt: number | null = null;
+  let stickyFieldOfView: number | null = null;
+  let stickySpeed: number | null = null;
 
   for (let i = 0; i < steps.length; i += 1) {
     const step = steps[i];
@@ -119,7 +128,13 @@ export async function resolveSteps(
     }
 
     const altitude = decideAltitude(step, place.kind, previousAltitude, config);
-    const duration = decideDuration(step, config);
+    if (step.tiltDegrees !== null) stickyTilt = step.tiltDegrees;
+    if (step.fieldOfViewDegrees !== null) stickyFieldOfView = step.fieldOfViewDegrees;
+    if (step.speedScale !== null) stickySpeed = step.speedScale;
+
+    const previous = resolved.at(-1);
+    const duration = decideDuration(step, config, previous, { ...place, altitude: altitude.value }, stickySpeed);
+    const tilt = decideTilt(stickyTilt, altitude.value, config);
 
     resolved.push({
       index: step.index,
@@ -129,10 +144,24 @@ export async function resolveSteps(
       duration: duration.value,
       altitudeSource: altitude.source,
       durationSource: duration.source,
+      tilt: tilt.value,
+      tiltSource: tilt.source,
+      fieldOfView: stickyFieldOfView,
       zoom: step.zoom,
       source: step.source,
     });
     previousAltitude = altitude.value;
+  }
+
+  // A lens named part-way through applies from the start too. Otherwise the
+  // steps before it keep the default and the shot opens with an unasked-for
+  // zoom as the field of view slides from 60 to what was asked for.
+  const firstLens = resolved.find((step) => step.fieldOfView !== null)?.fieldOfView ?? null;
+  if (firstLens !== null) {
+    for (const step of resolved) {
+      if (step.fieldOfView === null) step.fieldOfView = firstLens;
+      else break;
+    }
   }
 
   return { steps: resolved, warnings };
@@ -206,7 +235,24 @@ function nextSmaller(ladder: number[], current: number): number {
   return smaller ?? current / 10;
 }
 
-function decideDuration(step: ParsedStep, config: SessionConfig): {
+/** The angle to hold: what the command asked for, or what the height suggests. */
+function decideTilt(
+  explicit: number | null,
+  altitude: number,
+  config: SessionConfig,
+): { value: number; source: ResolvedStep['tiltSource'] } {
+  if (explicit !== null) return { value: explicit, source: 'explicit' };
+  if (config.automaticTilt) return { value: smartTilt(altitude), source: 'automatic' };
+  return { value: config.defaultTilt, source: 'default' };
+}
+
+function decideDuration(
+  step: ParsedStep,
+  config: SessionConfig,
+  previous: ResolvedStep | undefined,
+  here: { latitude: number; longitude: number; altitude: number },
+  speedScale: number | null,
+): {
   value: number;
   source: ResolvedStep['durationSource'];
 } {
@@ -222,8 +268,29 @@ function decideDuration(step: ParsedStep, config: SessionConfig): {
   // A start is an instantaneous pose at frame 0 unless the user asked it to
   // linger, so it costs no time of its own by default.
   if (step.action === 'start') return { value: 0, source: 'default' };
-  const value = step.action === 'hold' ? config.defaultHoldSeconds : config.defaultTransitionSeconds;
-  return { value, source: 'default' };
+
+  const scale = speedScale ?? 1;
+  if (step.action === 'hold') {
+    return { value: round(config.defaultHoldSeconds * scale, 2), source: scale === 1 ? 'default' : 'automatic' };
+  }
+
+  // A move's length comes from the move itself, so a hop and a dive from orbit
+  // are not given the same four seconds.
+  const from = previous?.place;
+  if (config.automaticTiming && previous !== undefined && from !== null && from !== undefined) {
+    const seconds = smartDuration(
+      { latitude: from.latitude, longitude: from.longitude, altitude: previous.altitude },
+      here,
+      config.autoDuration,
+    );
+    return { value: round(seconds * scale, 2), source: 'automatic' };
+  }
+  return { value: round(config.defaultTransitionSeconds * scale, 2), source: scale === 1 ? 'default' : 'automatic' };
+}
+
+function round(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
 }
 
 /** Converts resolved steps into absolute frame numbers and keyframes (FR3). */
@@ -282,6 +349,7 @@ export function buildTimeline(
     height: config.height,
     totalFrames: lastFrame + 1,
     durationSeconds: Number((lastFrame / config.frameRate).toFixed(3)),
+    writeFieldOfView: config.writeFieldOfView || resolved.some((step) => step.fieldOfView !== null),
     steps: resolved,
     keyframes,
     warnings: allWarnings,
@@ -303,9 +371,9 @@ function makeKeyframe(
     longitude: place.longitude,
     altitude: step.altitude,
     pan: config.defaultPan,
-    tilt: config.defaultTilt,
+    tilt: step.tilt,
     roll: config.defaultRoll,
-    fieldOfView: config.defaultFieldOfView,
+    fieldOfView: step.fieldOfView ?? config.defaultFieldOfView,
   };
   return {
     frame,

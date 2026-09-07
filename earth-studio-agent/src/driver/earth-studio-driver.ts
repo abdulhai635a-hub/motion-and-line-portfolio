@@ -176,7 +176,7 @@ export class EarthStudioDriver {
     const results: KeyframeResult[] = [];
     for (const keyframe of path.keyframes) {
       try {
-        results.push(await this.applyKeyframe(keyframe));
+        results.push(await this.applyKeyframe(keyframe, { writeFieldOfView: path.writeFieldOfView }));
       } catch (cause) {
         const result: KeyframeResult = {
           frame: keyframe.frame,
@@ -212,7 +212,7 @@ export class EarthStudioDriver {
   }
 
   /** Seeks to one frame and writes the whole camera state there. */
-  async applyKeyframe(keyframe: Keyframe): Promise<KeyframeResult> {
+  async applyKeyframe(keyframe: Keyframe, options: { writeFieldOfView?: boolean } = {}): Promise<KeyframeResult> {
     await seekToFrame(this.page, keyframe.frame, {
       readout: this.selectors.playhead.readout.candidates[0],
       settleMs: this.settleMs,
@@ -225,6 +225,11 @@ export class EarthStudioDriver {
 
     for (const name of CAMERA_FIELD_ORDER) {
       const attribute = this.selectors.camera[name];
+      // The project's own lens is left alone unless the command named one.
+      if (name === 'fieldOfView' && options.writeFieldOfView !== true) {
+        skipped.push(name);
+        continue;
+      }
       if (!(await this.isUsable(widgetSelector(attribute)))) {
         if (attribute.required) {
           throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${attribute.label} row cannot be edited.`, {

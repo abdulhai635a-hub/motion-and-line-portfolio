@@ -41,6 +41,22 @@ describe('run log (FR5)', () => {
     assert.match(log, /AMBIGUOUS_PLACE/);
   });
 
+  test('does not claim a field of view it will not write', async () => {
+    const { path } = await planCameraPath('fly to Rome');
+    const log = renderPathLog(path);
+    assert.match(log, /fov is left as the project has it/);
+    // The keyframe rows show a dash in the fov column, not a number the driver
+    // never types.
+    const row = log.split('\n').find((line) => line.includes('fly_to Rome'));
+    assert.ok(row);
+    assert.match(row, /-\s+fly_to Rome/);
+
+    const named = await planCameraPath('fly to Rome with field of view 30');
+    const namedLog = renderPathLog(named.path);
+    assert.doesNotMatch(namedLog, /fov is left as the project has it/);
+    assert.match(namedLog, /30\.0\s+fly_to Rome/);
+  });
+
   test('csv has one header and one row per keyframe', async () => {
     const { path } = await planCameraPath('fly to Rome. hold 2s. fly to Paris');
     const rows = renderCsv(path).trim().split('\n');

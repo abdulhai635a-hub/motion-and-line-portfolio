@@ -105,6 +105,30 @@ const FILLER_WORDS = new Set([
   'over', 'from', 'above', 'back', 'again',
 ]);
 
+/** "tilt 45", "tilt to 30 degrees". */
+const TILT_NUMBER = /\btilt(?:ed)?\s+(?:to\s+)?(-?[0-9]+(?:\.[0-9]+)?)\s*(?:deg|degs|degree|degrees)?\b/;
+/** Phrases that name an angle without a number. */
+const TILT_PHRASES: Array<[RegExp, number]> = [
+  [/\b(?:top[\s-]?down|straight[\s-]down|overhead|nadir|bird'?s?[\s-]?eye)\b/, 0],
+  [/\b(?:angled|oblique|cinematic|dramatic|tilted)\b/, 45],
+  [/\b(?:horizon|horizontal|eye[\s-]?level)\b/, 80],
+];
+
+/** "field of view 30", "fov 24", "wide angle". */
+const FOV_NUMBER = /\b(?:field[\s-]of[\s-]view|fov|lens)\s+(?:of\s+)?([0-9]+(?:\.[0-9]+)?)\s*(?:deg|degree|degrees)?\b/;
+const FOV_PHRASES: Array<[RegExp, number]> = [
+  [/\bwide[\s-]?angle\b/, 90],
+  [/\b(?:telephoto|narrow[\s-]?angle)\b/, 20],
+];
+
+/** "slowly" and "quickly" scale whatever duration is chosen. */
+const SPEED_PHRASES: Array<[RegExp, number]> = [
+  [/\b(?:very\s+slowly|really\s+slowly)\b/, 2.2],
+  [/\b(?:slowly|slow|gently|gradually|leisurely)\b/, 1.6],
+  [/\b(?:very\s+quickly|really\s+fast)\b/, 0.4],
+  [/\b(?:quickly|quick|fast|rapidly|snap|snappy|briskly)\b/, 0.6],
+];
+
 /** Sentinel that stands in for a dot that must not split a sentence. */
 const DOT_GUARD = '~d0t~';
 
@@ -126,17 +150,29 @@ export function parseCommand(command: string): ParseResult {
   const { text, restore } = protectAndPlaces(withoutThousands);
   const steps: ParsedStep[] = [];
   const ignored: string[] = [];
+  /** Modifiers read before any step existed, waiting for the first one. */
+  const pending: ClauseFields[] = [];
 
   for (const sentence of splitSentences(text)) {
     let mergeTarget: ParsedStep | null = null;
     for (const rawClause of splitClauses(sentence)) {
       const clause = restore(rawClause).trim();
       if (clause === '') continue;
-      const parsed = parseClause(clause);
-      if (parsed === null) {
+      const result = parseClause(clause);
+      if (result === null) {
         ignored.push(clause);
         continue;
       }
+      if (result.kind === 'modifier') {
+        // An angle or a pace on its own belongs to the step beside it - the one
+        // in this sentence, else the last one written. Said before any step at
+        // all ("slowly. fly to Rome."), it waits for the first one.
+        const target = mergeTarget ?? steps.at(-1) ?? null;
+        if (target === null) pending.push(result.fields);
+        else mergeInto(target, result.fields);
+        continue;
+      }
+      const parsed = result.step;
       // A clause naming no place describes the previous clause of the same
       // sentence ("fly to Mount Fuji and zoom in close"). A hold always stands
       // alone, because it is a separate span of time.
@@ -150,6 +186,8 @@ export function parseCommand(command: string): ParseResult {
         continue;
       }
       const step: ParsedStep = { ...parsed, index: steps.length + 1 };
+      for (const waiting of pending) backfill(step, waiting);
+      pending.length = 0;
       steps.push(step);
       mergeTarget = step;
     }
@@ -165,10 +203,13 @@ export function parseCommand(command: string): ParseResult {
 }
 
 /** Folds a modifier clause into the step it describes. */
-function mergeInto(target: ParsedStep, extra: Omit<ParsedStep, 'index'>): void {
+function mergeInto(target: ParsedStep, extra: ClauseFields): void {
   if (extra.zoom !== null) target.zoom = extra.zoom;
   if (extra.altitudeMeters !== null) target.altitudeMeters = extra.altitudeMeters;
   if (extra.durationSeconds !== null) target.durationSeconds = extra.durationSeconds;
+  if (extra.tiltDegrees !== null) target.tiltDegrees = extra.tiltDegrees;
+  if (extra.fieldOfViewDegrees !== null) target.fieldOfViewDegrees = extra.fieldOfViewDegrees;
+  if (extra.speedScale !== null) target.speedScale = extra.speedScale;
   if (target.action === 'start') {
     // "start from space and zoom in" is still a start.
   } else if (extra.action === 'zoom_in' || extra.action === 'zoom_out') {
@@ -179,6 +220,14 @@ function mergeInto(target: ParsedStep, extra: Omit<ParsedStep, 'index'>): void {
     }
   }
   target.source = `${target.source} + ${extra.source}`;
+}
+
+/** Like mergeInto, but the step's own words win over a modifier that preceded it. */
+function backfill(target: ParsedStep, extra: ClauseFields): void {
+  if (target.tiltDegrees === null) target.tiltDegrees = extra.tiltDegrees;
+  if (target.fieldOfViewDegrees === null) target.fieldOfViewDegrees = extra.fieldOfViewDegrees;
+  if (target.speedScale === null) target.speedScale = extra.speedScale;
+  target.source = `${extra.source} + ${target.source}`;
 }
 
 /** Masks multi-word place names so clause splitting keeps them whole. */
@@ -223,10 +272,30 @@ export function splitClauses(sentence: string): string[] {
     .filter((part) => part !== '');
 }
 
+/** Everything a clause can say, minus which step it belongs to. */
+type ClauseFields = Omit<ParsedStep, 'index' | 'action'> & { action?: ActionKind };
+
+/**
+ * What one clause turned out to be: a step of its own, or a change to the step
+ * beside it ("tilt 45", "slowly"), which names no move and cannot stand alone.
+ */
+type ClauseResult = { kind: 'step'; step: Omit<ParsedStep, 'index'> } | { kind: 'modifier'; fields: ClauseFields };
+
 /** Parses a single clause, or returns null when it carries no camera meaning. */
-function parseClause(clause: string): Omit<ParsedStep, 'index'> | null {
+function parseClause(clause: string): ClauseResult | null {
   const source = clause;
   let working = ` ${clause.toLowerCase().replace(/\s+/g, ' ')} `;
+
+  // Tilt and lens come first: their numbers would otherwise be read as an
+  // altitude or a duration.
+  const tilt = extractTilt(working);
+  working = tilt.rest;
+
+  const fieldOfView = extractFieldOfView(working);
+  working = fieldOfView.rest;
+
+  const speed = extractSpeed(working);
+  working = speed.rest;
 
   const altitude = extractAltitude(working);
   working = altitude.rest;
@@ -263,16 +332,57 @@ function parseClause(clause: string): Omit<ParsedStep, 'index'> | null {
   if (zoom === null) zoom = readDescriptor(working);
 
   const action = verbAction ?? readAction(working, placeQuery !== null, zoom);
-  if (action === null) return null;
-
-  return {
-    action,
+  const fields: ClauseFields = {
     placeQuery,
     zoom,
     altitudeMeters: altitude.value,
     durationSeconds: duration.value,
+    tiltDegrees: tilt.value,
+    fieldOfViewDegrees: fieldOfView.value,
+    speedScale: speed.value,
     source,
   };
+  if (action !== null) return { kind: 'step', step: { ...fields, action } };
+
+  // No move, but an angle, a lens or a pace: "fly to Rome, tilt 45" splits on
+  // the comma, and the second half is a change to the first, not rubbish.
+  const setsCamera = tilt.value !== null || fieldOfView.value !== null || speed.value !== null;
+  if (setsCamera && placeQuery === null) return { kind: 'modifier', fields };
+  return null;
+}
+
+function extractTilt(text: string): { value: number | null; rest: string } {
+  const numbered = text.match(TILT_NUMBER);
+  if (numbered) {
+    const value = Number.parseFloat(numbered[1] ?? '');
+    if (Number.isFinite(value)) return { value, rest: text.replace(numbered[0], ' ') };
+  }
+  for (const [pattern, degrees] of TILT_PHRASES) {
+    const match = text.match(pattern);
+    if (match) return { value: degrees, rest: text.replace(match[0], ' ') };
+  }
+  return { value: null, rest: text };
+}
+
+function extractFieldOfView(text: string): { value: number | null; rest: string } {
+  const numbered = text.match(FOV_NUMBER);
+  if (numbered) {
+    const value = Number.parseFloat(numbered[1] ?? '');
+    if (Number.isFinite(value) && value > 0) return { value, rest: text.replace(numbered[0], ' ') };
+  }
+  for (const [pattern, degrees] of FOV_PHRASES) {
+    const match = text.match(pattern);
+    if (match) return { value: degrees, rest: text.replace(match[0], ' ') };
+  }
+  return { value: null, rest: text };
+}
+
+function extractSpeed(text: string): { value: number | null; rest: string } {
+  for (const [pattern, scale] of SPEED_PHRASES) {
+    const match = text.match(pattern);
+    if (match) return { value: scale, rest: text.replace(match[0], ' ') };
+  }
+  return { value: null, rest: text };
 }
 
 const ALTITUDE_UNITS = Object.keys(METRES_PER_UNIT).sort((a, b) => b.length - a.length).join('|');
