@@ -49,14 +49,15 @@ describe('planCameraPath', () => {
 
   test('fails with the offending step when a place cannot be resolved (FR6)', async () => {
     await assert.rejects(
-      () => planCameraPath('fly to Rome. hold 2s. fly to Qqqqzzz Nowhere', {
+      // Nothing here resolves, so there is no path to build at all.
+      () => planCameraPath('fly to Qqqqzzz Nowhere. hold 2s', {
         geocoder: new Geocoder({ providers: [offlineProvider] }),
       }),
       (error: unknown) => {
         assert.ok(error instanceof AgentError);
         assert.equal(error.code, 'PLACE_NOT_FOUND');
-        assert.equal(error.stepIndex, 4);
-        assert.match(error.format(), /step 4/);
+        assert.equal(error.stepIndex, 2);
+        assert.match(error.format(), /step 2/);
         return true;
       },
     );

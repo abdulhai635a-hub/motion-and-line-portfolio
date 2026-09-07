@@ -181,6 +181,7 @@ The parser is forgiving rather than strict. Each step may name:
 | Field | Examples |
 |---|---|
 | Place | `Japan`, `Mount Fuji`, `Washington, D.C.`, `Trinidad and Tobago` |
+| Coordinates | `6°00'44"S, 50°10'37"W`, `-6.0122, -50.1769`, `35.6762 139.6503` — read directly, never looked up |
 | Action | `zoom in`, `zoom out`, `fly to`, `pan to`, `hold`, `wait`, `start from` |
 | Duration | `3 seconds`, `5 sec`, `2s`, `hold 1.5 seconds`, `for half a second`, `2 minutes` |
 | Zoom level | `close`, `country level`, `street level`, or an explicit `zoom to 500 meters` / `1.5km` / `1000 feet` |
@@ -201,6 +202,22 @@ Two conveniences worth knowing:
   `--no-implicit-start`.
 - **A bare `zoom in` / `zoom out`** moves one rung along the altitude table
   below, relative to where the camera already is.
+
+### Pasting a shot plan
+
+A brief written for a person - a heading, a coordinate in brackets, `Type:`,
+`Link:`, then a line of prose - can go in as it is. Coordinates are read
+exactly, and a line that turns out not to be a place no longer stops the run:
+
+- A line that says nothing about the camera (`Link: Google Earth Studio`) is
+  left out, with a warning naming it.
+- A line that describes a move (`a slow steady push-in from high orbit`) keeps
+  the place the previous line established, and does what it says.
+- Only when **nothing** in the command resolves does the run stop.
+
+`from` is read as where a move begins, not where it ends: `push in from high
+orbit` opens at orbit and descends. `start from space` still means the opening
+pose is in space.
 
 ### Move length, tilt and lens set themselves
 

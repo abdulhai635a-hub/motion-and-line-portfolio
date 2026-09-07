@@ -219,6 +219,20 @@ describe('parseCommand', () => {
     assert.equal(steps[0]?.tiltDegrees, 20);
   });
 
+  test('"from" names where a move begins, not where it ends', () => {
+    const { steps } = parseCommand('push in from high orbit');
+    assert.equal(steps[0]?.action, 'zoom_in');
+    assert.equal(steps[0]?.zoom, null, 'orbit is the origin, not the target');
+    assert.equal(steps[0]?.fromZoom, 'space');
+  });
+
+  test('but a step that starts the sequence starts there', () => {
+    const { steps } = parseCommand('start from space, zoom into Japan');
+    assert.equal(steps[0]?.action, 'start');
+    assert.equal(steps[0]?.zoom, 'space');
+    assert.equal(steps[0]?.fromZoom, null);
+  });
+
   test('still ignores a clause that names nothing at all', () => {
     const { ignored } = parseCommand('fly to Rome, of the');
     assert.deepEqual(ignored, ['of the']);

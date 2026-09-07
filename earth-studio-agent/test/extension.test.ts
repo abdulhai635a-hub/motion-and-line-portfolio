@@ -377,7 +377,7 @@ describe('running inside the page, as the extension does', () => {
         EarthStudioAgent: { runCommandInPage(command: string, options: unknown): Promise<unknown> };
       }).EarthStudioAgent;
       try {
-        await api.runCommandInPage('fly to Rome. fly to Qqqqzzz Nowhere', {});
+        await api.runCommandInPage('fly to Qqqqzzz Nowhere', {});
         return 'no error';
       } catch (error) {
         return (error as { format?: () => string }).format?.() ?? String(error);
@@ -385,7 +385,7 @@ describe('running inside the page, as the extension does', () => {
     });
 
     assert.match(failure, /PLACE_NOT_FOUND/);
-    assert.match(failure, /step 3/);
+    assert.match(failure, /step 2/);
     await page.close();
   });
 

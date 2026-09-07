@@ -21,6 +21,7 @@
 import type { ActionKind, ParsedStep, ZoomDescriptor } from './types.ts';
 import { AgentError } from './errors.ts';
 import { multiWordPlaceNames } from './geocode/gazetteer.ts';
+import { findCoordinates } from './geocode/coordinates.ts';
 
 /**
  * Place names whose own punctuation would otherwise be read as a clause break.
@@ -74,9 +75,20 @@ const DESCRIPTOR_PATTERNS: Array<[RegExp, ZoomDescriptor]> = [
   [/\bclose\b/, 'close'],
 ];
 
+/** The only keywords a preposition may introduce as a zoom level. */
+const DESCRIPTOR_WORDS =
+  String.raw`(?:outer\s+space|space|global|globe|orbit|orbital|country|national|region|regional|state|province|county|city|town|metro|urban|street|road|ground|rooftop|close[\s-]?up|closeup|close|landmark|building)(?:[\s-]*level)?`;
+
 /** Only these keywords may follow "at"/"to" and be read as a zoom level. */
-const DESCRIPTOR_AFTER_PREPOSITION =
-  /\b(?:at|to)\s+(?:the\s+)?((?:outer\s+space|space|global|globe|orbit|orbital|country|national|region|regional|state|province|county|city|town|metro|urban|street|road|ground|rooftop|close[\s-]?up|closeup|close|landmark|building)(?:[\s-]*level)?)\b/;
+const DESCRIPTOR_AFTER_PREPOSITION = new RegExp(String.raw`\b(?:at|to)\s+(?:the\s+)?(${DESCRIPTOR_WORDS})\b`);
+
+/**
+ * "from" names where a move begins, not where it ends: "push in from high
+ * orbit" descends, and reading that as the target sent the camera up instead.
+ */
+const DESCRIPTOR_AFTER_FROM = new RegExp(
+  String.raw`\bfrom\s+(?:the\s+)?(?:high\s+|low\s+|way\s+)?(${DESCRIPTOR_WORDS})\b`,
+);
 
 const ACTION_PATTERNS: Array<[RegExp, ActionKind]> = [
   [/\b(?:hold|wait|stay|pause|linger|freeze|remain|sit)\b/, 'hold'],
@@ -205,6 +217,7 @@ export function parseCommand(command: string): ParseResult {
 /** Folds a modifier clause into the step it describes. */
 function mergeInto(target: ParsedStep, extra: ClauseFields): void {
   if (extra.zoom !== null) target.zoom = extra.zoom;
+  if (extra.fromZoom !== null) target.fromZoom = extra.fromZoom;
   if (extra.altitudeMeters !== null) target.altitudeMeters = extra.altitudeMeters;
   if (extra.durationSeconds !== null) target.durationSeconds = extra.durationSeconds;
   if (extra.tiltDegrees !== null) target.tiltDegrees = extra.tiltDegrees;
@@ -234,6 +247,12 @@ function backfill(target: ParsedStep, extra: ClauseFields): void {
 function protectAndPlaces(command: string): { text: string; restore: (value: string) => string } {
   const found: string[] = [];
   let text = command;
+  // Coordinates first: "6°00'44\"S, 50°10'37\"W" carries a comma of its own,
+  // and splitting on it would leave two halves that mean nothing apart.
+  for (const coordinate of findCoordinates(text)) {
+    found.push(coordinate.text);
+    text = text.replace(coordinate.text, `~p${found.length - 1}~`);
+  }
   for (const place of PROTECTED_PLACES) {
     const pattern = new RegExp(escapeForRegExp(place).replace(/(?:\\\s)+/g, '\\s+'), 'gi');
     text = text.replace(pattern, (match) => {
@@ -286,6 +305,20 @@ function parseClause(clause: string): ClauseResult | null {
   const source = clause;
   let working = ` ${clause.toLowerCase().replace(/\s+/g, ' ')} `;
 
+  // A coordinate pair is the place, and an exact one. It comes out before
+  // anything else, or its numbers get read as a duration or an altitude.
+  const coordinates = findCoordinates(clause)[0]?.text ?? null;
+  if (coordinates !== null) working = working.replace(coordinates.toLowerCase(), ' ');
+
+  // Where the move starts, taken out before the place extractor can read "high
+  // orbit" as somewhere to fly to.
+  let fromZoom: ZoomDescriptor | null = null;
+  const origin = working.match(DESCRIPTOR_AFTER_FROM);
+  if (origin) {
+    fromZoom = readDescriptorExact(origin[1] ?? '');
+    if (fromZoom !== null) working = working.replace(DESCRIPTOR_AFTER_FROM, ' ');
+  }
+
   // Tilt and lens come first: their numbers would otherwise be read as an
   // altitude or a duration.
   const tilt = extractTilt(working);
@@ -316,7 +349,7 @@ function parseClause(clause: string): ClauseResult | null {
   // verb such as "pull back" across a place and a leftover.
   const verbAction = readVerb(working);
 
-  const place = extractPlace(working);
+  const place = coordinates === null ? extractPlace(working) : { value: coordinates, rest: working };
   working = place.rest;
   let placeQuery = place.value;
 
@@ -331,10 +364,17 @@ function parseClause(clause: string): ClauseResult | null {
 
   if (zoom === null) zoom = readDescriptor(working);
 
-  const action = verbAction ?? readAction(working, placeQuery !== null, zoom);
+  const action = verbAction ?? readAction(working, placeQuery !== null, zoom ?? fromZoom);
+  // A step that begins the sequence begins at that level: "start from space" is
+  // the pose itself, not the pose before it.
+  if (action === 'start' && zoom === null) {
+    zoom = fromZoom;
+    fromZoom = null;
+  }
   const fields: ClauseFields = {
     placeQuery,
     zoom,
+    fromZoom,
     altitudeMeters: altitude.value,
     durationSeconds: duration.value,
     tiltDegrees: tilt.value,

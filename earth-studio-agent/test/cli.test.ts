@@ -138,10 +138,10 @@ describe('cli', () => {
   });
 
   test('an unresolvable place exits non-zero and names the step (FR6)', async () => {
-    const result = await cli('plan', 'fly to Rome. fly to Qqqqzzz Nowhere', '--out', join(workspace, 'bad'));
+    const result = await cli('plan', 'fly to Qqqqzzz Nowhere', '--out', join(workspace, 'bad'));
     assert.equal(result.code, 1);
     assert.match(result.stderr, /PLACE_NOT_FOUND/);
-    assert.match(result.stderr, /step 3/);
+    assert.match(result.stderr, /step 2/);
     assert.match(result.stderr, /hint:/);
   });
 

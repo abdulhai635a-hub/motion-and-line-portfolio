@@ -9,10 +9,12 @@ import type { GeoPlace, PlaceCandidate } from '../types.ts';
 import type { SessionConfig } from '../config.ts';
 import { AgentError } from '../errors.ts';
 import { offlineProvider, type GeocodeProvider } from './providers.ts';
+import { coordinatePlace, parseCoordinates } from './coordinates.ts';
 
 export { offlineProvider, createNominatimProvider, mapNominatimKind } from './providers.ts';
 export type { GeocodeProvider } from './providers.ts';
 export { knownNames, normaliseName } from './gazetteer.ts';
+export { parseCoordinates, findCoordinates, formatCoordinates } from './coordinates.ts';
 
 export interface GeocoderOptions {
   providers?: GeocodeProvider[];
@@ -41,6 +43,16 @@ export class Geocoder {
     const key = query.trim().toLowerCase();
     const cached = this.cache.get(key);
     if (cached) return cached;
+
+    // Coordinates are already the answer. A shot plan that names the exact spot
+    // - "6°00'44\"S, 50°10'37\"W" - must not depend on a gazetteer, or on the
+    // network, or on whatever words were written beside it.
+    const at = parseCoordinates(query);
+    if (at !== null) {
+      const place = coordinatePlace(query, at);
+      this.cache.set(key, place);
+      return place;
+    }
 
     const failures: string[] = [];
     for (const provider of this.providers) {

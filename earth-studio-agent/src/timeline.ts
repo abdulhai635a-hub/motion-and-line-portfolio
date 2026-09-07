@@ -58,6 +58,7 @@ export async function resolveSteps(
           action: 'start',
           placeQuery: null,
           zoom: null,
+          fromZoom: null,
           altitudeMeters: null,
           durationSeconds: null,
           tiltDegrees: null,
@@ -72,9 +73,39 @@ export async function resolveSteps(
 
   // Pass 1: geocode every named place, keeping failures attached to their step.
   const places = new Map<number, Awaited<ReturnType<Geocoder['resolve']>>>();
+  const dropped = new Set<number>();
+  let firstFailure: AgentError | null = null;
   for (const step of steps) {
     if (step.placeQuery === null) continue;
-    let place = await geocoder.resolve(step.placeQuery, step.index);
+    let place: GeoPlace;
+    try {
+      place = await geocoder.resolve(step.placeQuery, step.index);
+    } catch (error) {
+      // People paste whole shot plans - headings, "Link: ...", a line of prose -
+      // and one line that is not a place must not throw the rest away. What the
+      // step says about the camera decides: a line that says nothing else is
+      // dropped, a line that describes a move keeps the place it followed.
+      if (!(error instanceof AgentError) || error.code !== 'PLACE_NOT_FOUND') throw error;
+      firstFailure = firstFailure ?? error;
+      const describesCamera =
+        step.action !== 'fly_to' ||
+        step.zoom !== null ||
+        step.altitudeMeters !== null ||
+        step.durationSeconds !== null ||
+        step.tiltDegrees !== null ||
+        step.fieldOfViewDegrees !== null ||
+        step.speedScale !== null;
+      warnings.push({
+        code: 'PLACE_NOT_FOUND',
+        stepIndex: step.index,
+        message: describesCamera
+          ? `"${step.placeQuery}" is not a place, so this step stays where the one before it left off.`
+          : `"${step.placeQuery}" is not a place and the step says nothing else, so it was left out.`,
+      });
+      step.placeQuery = null;
+      if (!describesCamera) dropped.add(step.index);
+      continue;
+    }
     if (place.ambiguous && onAmbiguous !== undefined) {
       place = await onAmbiguous(place, step.index);
     }
@@ -90,6 +121,41 @@ export async function resolveSteps(
           `${alt ? describe(alt.name, alt.context) : 'none'}.`,
       });
     }
+  }
+
+  if (places.size === 0) {
+    // Nothing at all resolved: there is no path to build, so the first failure
+    // is the honest answer rather than a warning nobody can act on.
+    if (firstFailure !== null) throw firstFailure;
+  }
+  for (const index of dropped) {
+    const at = steps.findIndex((step) => step.index === index);
+    if (at !== -1) steps.splice(at, 1);
+  }
+  steps.forEach((step, i) => {
+    const place = places.get(step.index);
+    if (place !== undefined) {
+      places.delete(step.index);
+      places.set(i + 1, place);
+    }
+    step.index = i + 1;
+  });
+
+  // "Push in from high orbit" says where the move begins. The level belongs to
+  // the keyframe before it, so the move itself can go the way it was described.
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i];
+    if (step === undefined || step.fromZoom === null) continue;
+    const previous = steps[i - 1];
+    if (previous === undefined) {
+      // Nothing precedes it, so the step opens there itself.
+      step.zoom = step.zoom ?? step.fromZoom;
+      continue;
+    }
+    // A hold has no level of its own - it repeats what came before - and a step
+    // that states its own level has already said where it starts.
+    if (previous.action === 'hold' || previous.zoom !== null || previous.altitudeMeters !== null) continue;
+    previous.zoom = step.fromZoom;
   }
 
   // Pass 2: fill in places, altitudes, angles and durations in order.

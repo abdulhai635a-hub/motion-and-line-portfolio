@@ -499,6 +499,89 @@ var EarthStudioAgent = (() => {
     return [...names].sort((a, b) => b.length - a.length);
   }
 
+  // src/geocode/coordinates.ts
+  var SEXAGESIMAL = String.raw`(\d{1,3})\s*[°º]\s*(?:(\d{1,2}(?:\.\d+)?)\s*['′’]\s*)?(?:(\d{1,2}(?:\.\d+)?)\s*["″”]?\s*)?([NSEWnsew])(?![A-Za-z])`;
+  var DECIMAL = String.raw`([+-]?\d{1,3}\.\d+)\s*[°º]?\s*(?:([NSEWnsew])(?![A-Za-z]))?`;
+  var COMPONENT = `(?:${SEXAGESIMAL}|${DECIMAL})`;
+  var PAIR = `${COMPONENT}\\s*(?:,|;|/|\\s)\\s*${COMPONENT}`;
+  var COORDINATE_PATTERN = new RegExp(PAIR, "g");
+  function parseCoordinates(text) {
+    const trimmed = text.trim().replace(/^[([]|[)\]]$/g, "").trim();
+    const whole = new RegExp(`^${PAIR}$`, "i");
+    const match = whole.exec(trimmed);
+    return match === null ? null : fromMatch(match);
+  }
+  var UNIT_AFTER = /^\s*(?:s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|m|meter|meters|metre|metres|km|kilometer|kilometers|kilometre|kilometres|ft|foot|feet|mi|mile|miles|deg|degree|degrees|fps|%)\b/i;
+  function findCoordinates(text) {
+    const found = [];
+    COORDINATE_PATTERN.lastIndex = 0;
+    for (let match = COORDINATE_PATTERN.exec(text); match !== null; match = COORDINATE_PATTERN.exec(text)) {
+      if (fromMatch(match) === null) continue;
+      const marked = /[°ºNSEWnsew]/.test(match[0]);
+      if (!marked && UNIT_AFTER.test(text.slice(match.index + match[0].length))) continue;
+      found.push({ text: match[0].trim(), index: match.index });
+    }
+    return found;
+  }
+  function coordinatePlace(query, at) {
+    return {
+      query,
+      name: formatCoordinates(at),
+      latitude: at.latitude,
+      longitude: at.longitude,
+      // A coordinate is a point, not an area, so it gets the close-in altitude a
+      // landmark gets rather than a city's.
+      kind: "landmark",
+      context: "coordinates",
+      provider: "coordinates",
+      confidence: 1,
+      ambiguous: false,
+      alternatives: []
+    };
+  }
+  function formatCoordinates(at) {
+    return `${at.latitude.toFixed(6)}, ${at.longitude.toFixed(6)}`;
+  }
+  function fromMatch(match) {
+    const first = readComponent(match.slice(1, 7));
+    const second = readComponent(match.slice(7, 13));
+    if (first === null || second === null) return null;
+    let latitude = first;
+    let longitude = second;
+    const northSouth = /^[nsNS]$/;
+    if (first.hemisphere !== null && second.hemisphere !== null) {
+      if (northSouth.test(first.hemisphere) === northSouth.test(second.hemisphere)) return null;
+      if (!northSouth.test(first.hemisphere)) [latitude, longitude] = [second, first];
+    } else if (Math.abs(first.value) > 90 && Math.abs(second.value) <= 90) {
+      [latitude, longitude] = [second, first];
+    }
+    const lat = signed(latitude, /^[sS]$/);
+    const lon = signed(longitude, /^[wW]$/);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    if (lat === 0 && lon === 0) return null;
+    return { latitude: round2(lat), longitude: round2(lon) };
+  }
+  function readComponent(groups) {
+    const [degrees, minutes, seconds, hemisphere, decimal, decimalHemisphere] = groups;
+    if (degrees !== void 0) {
+      const value = Number(degrees) + Number(minutes ?? 0) / 60 + Number(seconds ?? 0) / 3600;
+      return Number.isFinite(value) ? { value, hemisphere: hemisphere ?? null } : null;
+    }
+    if (decimal !== void 0) {
+      const value = Number(decimal);
+      return Number.isFinite(value) ? { value, hemisphere: decimalHemisphere ?? null } : null;
+    }
+    return null;
+  }
+  function signed(component, negative) {
+    const magnitude = component.hemisphere === null ? component.value : Math.abs(component.value);
+    return component.hemisphere !== null && negative.test(component.hemisphere) ? -magnitude : magnitude;
+  }
+  function round2(value) {
+    return Number(value.toFixed(6));
+  }
+
   // src/parser.ts
   var EXTRA_PROTECTED_PLACES = [
     "antigua and barbuda",
@@ -584,7 +667,11 @@ var EarthStudioAgent = (() => {
     [/\b(?:close[\s-]?up|closeup|really\s+close|very\s+close|super\s+close|tight|landmark|building)(?:[\s-]*level)?\b/, "close"],
     [/\bclose\b/, "close"]
   ];
-  var DESCRIPTOR_AFTER_PREPOSITION = /\b(?:at|to)\s+(?:the\s+)?((?:outer\s+space|space|global|globe|orbit|orbital|country|national|region|regional|state|province|county|city|town|metro|urban|street|road|ground|rooftop|close[\s-]?up|closeup|close|landmark|building)(?:[\s-]*level)?)\b/;
+  var DESCRIPTOR_WORDS = String.raw`(?:outer\s+space|space|global|globe|orbit|orbital|country|national|region|regional|state|province|county|city|town|metro|urban|street|road|ground|rooftop|close[\s-]?up|closeup|close|landmark|building)(?:[\s-]*level)?`;
+  var DESCRIPTOR_AFTER_PREPOSITION = new RegExp(String.raw`\b(?:at|to)\s+(?:the\s+)?(${DESCRIPTOR_WORDS})\b`);
+  var DESCRIPTOR_AFTER_FROM = new RegExp(
+    String.raw`\bfrom\s+(?:the\s+)?(?:high\s+|low\s+|way\s+)?(${DESCRIPTOR_WORDS})\b`
+  );
   var ACTION_PATTERNS = [
     [/\b(?:hold|wait|stay|pause|linger|freeze|remain|sit)\b/, "hold"],
     [/\b(?:zoom\s*out|pull\s*(?:out|back|away)|back\s*out|zoom\s*back|widen)\b/, "zoom_out"],
@@ -707,6 +794,7 @@ var EarthStudioAgent = (() => {
   }
   function mergeInto(target, extra) {
     if (extra.zoom !== null) target.zoom = extra.zoom;
+    if (extra.fromZoom !== null) target.fromZoom = extra.fromZoom;
     if (extra.altitudeMeters !== null) target.altitudeMeters = extra.altitudeMeters;
     if (extra.durationSeconds !== null) target.durationSeconds = extra.durationSeconds;
     if (extra.tiltDegrees !== null) target.tiltDegrees = extra.tiltDegrees;
@@ -729,6 +817,10 @@ var EarthStudioAgent = (() => {
   function protectAndPlaces(command) {
     const found = [];
     let text = command;
+    for (const coordinate of findCoordinates(text)) {
+      found.push(coordinate.text);
+      text = text.replace(coordinate.text, `~p${found.length - 1}~`);
+    }
     for (const place of PROTECTED_PLACES) {
       const pattern = new RegExp(escapeForRegExp(place).replace(/(?:\\\s)+/g, "\\s+"), "gi");
       text = text.replace(pattern, (match) => {
@@ -753,6 +845,14 @@ var EarthStudioAgent = (() => {
   function parseClause(clause) {
     const source = clause;
     let working = ` ${clause.toLowerCase().replace(/\s+/g, " ")} `;
+    const coordinates = findCoordinates(clause)[0]?.text ?? null;
+    if (coordinates !== null) working = working.replace(coordinates.toLowerCase(), " ");
+    let fromZoom = null;
+    const origin = working.match(DESCRIPTOR_AFTER_FROM);
+    if (origin) {
+      fromZoom = readDescriptorExact(origin[1] ?? "");
+      if (fromZoom !== null) working = working.replace(DESCRIPTOR_AFTER_FROM, " ");
+    }
     const tilt = extractTilt(working);
     working = tilt.rest;
     const fieldOfView = extractFieldOfView(working);
@@ -770,7 +870,7 @@ var EarthStudioAgent = (() => {
       working = working.replace(DESCRIPTOR_AFTER_PREPOSITION, " ");
     }
     const verbAction = readVerb(working);
-    const place = extractPlace(working);
+    const place = coordinates === null ? extractPlace(working) : { value: coordinates, rest: working };
     working = place.rest;
     let placeQuery = place.value;
     if (placeQuery !== null) {
@@ -781,10 +881,15 @@ var EarthStudioAgent = (() => {
       }
     }
     if (zoom === null) zoom = readDescriptor(working);
-    const action = verbAction ?? readAction(working, placeQuery !== null, zoom);
+    const action = verbAction ?? readAction(working, placeQuery !== null, zoom ?? fromZoom);
+    if (action === "start" && zoom === null) {
+      zoom = fromZoom;
+      fromZoom = null;
+    }
     const fields = {
       placeQuery,
       zoom,
+      fromZoom,
       altitudeMeters: altitude.value,
       durationSeconds: duration.value,
       tiltDegrees: tilt.value,
@@ -840,7 +945,7 @@ var EarthStudioAgent = (() => {
     const amount = Number.parseFloat((match[1] ?? "").replace(/,/g, ""));
     const factor = METRES_PER_UNIT[match[2] ?? ""];
     if (!Number.isFinite(amount) || factor === void 0) return { value: null, rest: text };
-    return { value: round2(amount * factor, 3), rest: text.replace(match[0], " ") };
+    return { value: round3(amount * factor, 3), rest: text.replace(match[0], " ") };
   }
   var DURATION_UNITS = Object.keys(SECONDS_PER_UNIT).sort((a, b) => b.length - a.length).join("|");
   var WORD_NUMBER_KEYS = Object.keys(WORD_NUMBERS).sort((a, b) => b.length - a.length).join("|");
@@ -856,7 +961,7 @@ var EarthStudioAgent = (() => {
     if (amount === void 0 || !Number.isFinite(amount) || factor === void 0) {
       return { value: null, rest: text };
     }
-    return { value: round2(amount * factor, 3), rest: text.replace(match[0], " ") };
+    return { value: round3(amount * factor, 3), rest: text.replace(match[0], " ") };
   }
   function extractPlace(text) {
     const match = PLACE_PREPOSITION.exec(text);
@@ -921,7 +1026,7 @@ var EarthStudioAgent = (() => {
     if (zoom !== null) return "zoom_in";
     return null;
   }
-  function round2(value, digits) {
+  function round3(value, digits) {
     const factor = 10 ** digits;
     return Math.round(value * factor) / factor;
   }
@@ -935,6 +1040,7 @@ var EarthStudioAgent = (() => {
       action: "start",
       placeQuery: null,
       zoom: null,
+      fromZoom: null,
       altitudeMeters: null,
       durationSeconds: null,
       tiltDegrees: null,
@@ -946,9 +1052,26 @@ var EarthStudioAgent = (() => {
       step2.index = i + 1;
     });
     const places = /* @__PURE__ */ new Map();
+    const dropped = /* @__PURE__ */ new Set();
+    let firstFailure = null;
     for (const step2 of steps) {
       if (step2.placeQuery === null) continue;
-      let place = await geocoder.resolve(step2.placeQuery, step2.index);
+      let place;
+      try {
+        place = await geocoder.resolve(step2.placeQuery, step2.index);
+      } catch (error) {
+        if (!(error instanceof AgentError) || error.code !== "PLACE_NOT_FOUND") throw error;
+        firstFailure = firstFailure ?? error;
+        const describesCamera = step2.action !== "fly_to" || step2.zoom !== null || step2.altitudeMeters !== null || step2.durationSeconds !== null || step2.tiltDegrees !== null || step2.fieldOfViewDegrees !== null || step2.speedScale !== null;
+        warnings.push({
+          code: "PLACE_NOT_FOUND",
+          stepIndex: step2.index,
+          message: describesCamera ? `"${step2.placeQuery}" is not a place, so this step stays where the one before it left off.` : `"${step2.placeQuery}" is not a place and the step says nothing else, so it was left out.`
+        });
+        step2.placeQuery = null;
+        if (!describesCamera) dropped.add(step2.index);
+        continue;
+      }
       if (place.ambiguous && onAmbiguous !== void 0) {
         place = await onAmbiguous(place, step2.index);
       }
@@ -961,6 +1084,32 @@ var EarthStudioAgent = (() => {
           message: `"${step2.placeQuery}" is ambiguous: used ${describe(place.name, place.context)} (confidence ${place.confidence}); the closest alternative was ${alt ? describe(alt.name, alt.context) : "none"}.`
         });
       }
+    }
+    if (places.size === 0) {
+      if (firstFailure !== null) throw firstFailure;
+    }
+    for (const index of dropped) {
+      const at = steps.findIndex((step2) => step2.index === index);
+      if (at !== -1) steps.splice(at, 1);
+    }
+    steps.forEach((step2, i) => {
+      const place = places.get(step2.index);
+      if (place !== void 0) {
+        places.delete(step2.index);
+        places.set(i + 1, place);
+      }
+      step2.index = i + 1;
+    });
+    for (let i = 0; i < steps.length; i += 1) {
+      const step2 = steps[i];
+      if (step2 === void 0 || step2.fromZoom === null) continue;
+      const previous = steps[i - 1];
+      if (previous === void 0) {
+        step2.zoom = step2.zoom ?? step2.fromZoom;
+        continue;
+      }
+      if (previous.action === "hold" || previous.zoom !== null || previous.altitudeMeters !== null) continue;
+      previous.zoom = step2.fromZoom;
     }
     const resolved = [];
     let previousAltitude = null;
@@ -1084,7 +1233,7 @@ var EarthStudioAgent = (() => {
     if (step2.action === "start") return { value: 0, source: "default" };
     const scale = speedScale ?? 1;
     if (step2.action === "hold") {
-      return { value: round3(config.defaultHoldSeconds * scale, 2), source: scale === 1 ? "default" : "automatic" };
+      return { value: round4(config.defaultHoldSeconds * scale, 2), source: scale === 1 ? "default" : "automatic" };
     }
     const from = previous?.place;
     if (config.automaticTiming && previous !== void 0 && from !== null && from !== void 0) {
@@ -1093,11 +1242,11 @@ var EarthStudioAgent = (() => {
         here,
         config.autoDuration
       );
-      return { value: round3(seconds * scale, 2), source: "automatic" };
+      return { value: round4(seconds * scale, 2), source: "automatic" };
     }
-    return { value: round3(config.defaultTransitionSeconds * scale, 2), source: scale === 1 ? "default" : "automatic" };
+    return { value: round4(config.defaultTransitionSeconds * scale, 2), source: scale === 1 ? "default" : "automatic" };
   }
-  function round3(value, digits) {
+  function round4(value, digits) {
     const factor = 10 ** digits;
     return Math.round(value * factor) / factor;
   }
@@ -1297,6 +1446,12 @@ var EarthStudioAgent = (() => {
       const key = query.trim().toLowerCase();
       const cached = this.cache.get(key);
       if (cached) return cached;
+      const at = parseCoordinates(query);
+      if (at !== null) {
+        const place = coordinatePlace(query, at);
+        this.cache.set(key, place);
+        return place;
+      }
       const failures = [];
       for (const provider of this.providers) {
         let candidates;

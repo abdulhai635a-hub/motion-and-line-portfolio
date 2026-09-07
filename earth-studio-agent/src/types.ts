@@ -37,6 +37,8 @@ export interface ParsedStep {
   altitudeMeters: number | null;
   /** Explicit duration in seconds; null means "work it out from the shot". */
   durationSeconds: number | null;
+  /** The level a move starts from ("push in from high orbit"), if it says. */
+  fromZoom: ZoomDescriptor | null;
   /** Explicit tilt in degrees ("tilt 45"); null means "work it out". */
   tiltDegrees: number | null;
   /** Explicit field of view; null means "leave the project's lens alone". */

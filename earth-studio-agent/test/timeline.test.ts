@@ -118,22 +118,42 @@ describe('resolveSteps', () => {
     assert.equal(resolved.warnings.length, 0);
   });
 
-  test('an unresolvable place names its step and stops (FR6)', async () => {
+  test('stops when no place in the whole command can be resolved (FR6)', async () => {
     const config = makeConfig();
-    const { steps } = parseCommand('fly to Rome. fly to Qqqqzzz Nowhere');
+    const { steps } = parseCommand('fly to Qqqqzzz Nowhere');
     await assert.rejects(() => resolveSteps(steps, new Geocoder(), config), (error: unknown) => {
       assert.ok(error instanceof AgentError);
       assert.equal(error.code, 'PLACE_NOT_FOUND');
-      assert.equal(error.stepIndex, 3);
+      assert.equal(error.stepIndex, 2);
       return true;
     });
+  });
+
+  test('one line that is not a place does not throw the rest of a plan away', async () => {
+    // Pasted shot plans carry headings and notes. They are not places, and
+    // failing the whole run over them makes the agent useless for real briefs.
+    const config = makeConfig();
+    const { steps } = parseCommand('fly to Rome. Link: Google Earth Studio. then fly to Cairo');
+    const { steps: out, warnings } = await resolveSteps(steps, new Geocoder(), config);
+    assert.deepEqual(out.map((step) => step.place?.name), ['Rome', 'Rome', 'Cairo']);
+    assert.ok(warnings.some((warning) => warning.code === 'PLACE_NOT_FOUND' && /left out/.test(warning.message)));
+  });
+
+  test('a line that describes the camera keeps the place it followed', async () => {
+    const config = makeConfig();
+    const { steps } = parseCommand('fly to Rome. a slow push-in to street level over the qqqqzzz nowhere');
+    const { steps: out, warnings } = await resolveSteps(steps, new Geocoder(), config);
+    assert.equal(out.length, 3);
+    assert.equal(out[2]?.place?.name, 'Rome');
+    assert.equal(out[2]?.altitude, 150);
+    assert.ok(warnings.some((warning) => /stays where the one before it left off/.test(warning.message)));
   });
 
   test('a step with no place and nothing to inherit is reported, not skipped', async () => {
     const config = makeConfig();
     await assert.rejects(
       () => resolveSteps(
-        [{ index: 1, action: 'hold', placeQuery: null, zoom: null, altitudeMeters: null, durationSeconds: 2, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'hold 2s' }],
+        [{ index: 1, action: 'hold', placeQuery: null, zoom: null, fromZoom: null, altitudeMeters: null, durationSeconds: 2, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'hold 2s' }],
         new Geocoder(),
         config,
         { implicitStart: false },
@@ -151,7 +171,7 @@ describe('resolveSteps', () => {
     const config = makeConfig();
     await assert.rejects(
       () => resolveSteps(
-        [{ index: 1, action: 'fly_to', placeQuery: 'Rome', zoom: null, altitudeMeters: null, durationSeconds: 0, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'x' }],
+        [{ index: 1, action: 'fly_to', placeQuery: 'Rome', zoom: null, fromZoom: null, altitudeMeters: null, durationSeconds: 0, tiltDegrees: null, fieldOfViewDegrees: null, speedScale: null, source: 'x' }],
         new Geocoder(),
         config,
       ),
@@ -241,6 +261,34 @@ describe('buildTimeline', () => {
       path.keyframes.map((keyframe) => keyframe.camera.fieldOfView),
       path.keyframes.map(() => 30),
     );
+  });
+
+  test('a push-in "from high orbit" descends, instead of climbing to orbit', async () => {
+    // Read as a target, "from high orbit" sent the camera up and away from the
+    // subject - the opposite of the shot described.
+    const path = await build('fly to Rome. a slow steady push-in from high orbit');
+    const altitudes = path.keyframes.map((keyframe) => keyframe.camera.altitude);
+    assert.equal(altitudes.at(0), 10_000_000, 'it opens at orbit');
+    assert.ok((altitudes.at(-1) ?? 0) < 100_000, `it should end low, ended at ${altitudes.at(-1)}`);
+    assert.deepEqual([...altitudes].sort((a, b) => b - a), altitudes, 'every step goes downwards');
+  });
+
+  test('reads a pasted shot plan: coordinates, headings and a line of prose', async () => {
+    const path = await build(
+      'Shot 1 - Carajas mine (6°00\'44"S, 50°10\'37"W)\n' +
+        'Type: map\n' +
+        'Link: Google Earth Studio\n' +
+        'What to take: a slow steady downward push-in from high orbit - no zoom-cut',
+    );
+    for (const keyframe of path.keyframes) {
+      assert.equal(keyframe.camera.latitude, -6.012222);
+      assert.equal(keyframe.camera.longitude, -50.176944);
+    }
+    const altitudes = path.keyframes.map((keyframe) => keyframe.camera.altitude);
+    assert.equal(altitudes.at(0), 10_000_000);
+    assert.ok((altitudes.at(-1) ?? 0) <= 15_000, `should end close in, ended at ${altitudes.at(-1)}`);
+    // "slow" stretches the descent rather than leaving it at the default.
+    assert.ok((path.steps.at(-1)?.duration ?? 0) > 5, `the push-in should be slow, was ${path.steps.at(-1)?.duration}s`);
   });
 
   test('holds repeat the previous camera exactly, so nothing drifts', async () => {
