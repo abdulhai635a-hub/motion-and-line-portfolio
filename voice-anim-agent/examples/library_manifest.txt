@@ -1,0 +1,7 @@
+# One symbol name per line, exactly as it appears in the Animate library.
+# Export it once from the Master Library .fla with tools/export_library.jsfl.
+CHAR_Raju
+OBJ_Pizza
+OBJ_Table
+TXT_Caption
+CAM_Main

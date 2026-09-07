@@ -1,0 +1,5 @@
+line_id,line_text,subject_type,subject_name,action,animation,x,y,text
+1,"Raju walked toward the office",character,Raju,walk_left_to_right,ease-in-out,,,
+2,"A pizza sat on the table",object,Pizza,fade_in + static,linear,1240,940,
+3,"Raju picked up the pizza",character+object,"Raju, Pizza",pick_up,ease-out,,,
+4,"Dhaka, 1971",text-overlay,Caption,text_overlay,linear,,,"Dhaka, 1971"

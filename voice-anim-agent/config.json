@@ -1,0 +1,20 @@
+{
+  "fps": 24,
+  "stage": { "width": 1920, "height": 1080 },
+  "audio_layer": { "name": "VO", "position": "bottom" },
+  "entry_frames": 12,
+  "min_line_frames": 2,
+  "confidence_threshold": 0.5,
+  "batch_size": 50,
+  "auto_save_each_batch": true,
+  "offstage_margin": 400,
+  "scale_step": 0.2,
+  "camera_pan_distance": 300,
+  "default_positions": {
+    "character": { "x": 960, "y": 900 },
+    "object": { "x": 1200, "y": 950 },
+    "background": { "x": 960, "y": 540 },
+    "text-overlay": { "x": 240, "y": 900 },
+    "camera": { "x": 960, "y": 540 }
+  }
+}
