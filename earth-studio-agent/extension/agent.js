@@ -2233,7 +2233,7 @@ var EarthStudioAgent = (() => {
     for (let press = 0; press < fine; press += 1) await page.keyboard.press(fineKey);
     return total;
   }
-  async function findLastFrame(page, readout, settleMs) {
+  async function findLastFrame(page, readout = READOUT, settleMs = 250) {
     if (page.keyboard === void 0) return null;
     try {
       await releaseFocus(page);
@@ -2352,6 +2352,15 @@ var EarthStudioAgent = (() => {
         throw new AgentError("DRIVER_LAYOUT_MISMATCH", "The Earth Studio page does not expose the fields the driver needs.", {
           detail: `Missing: ${layout.missing.join(", ")} (selector set ${layout.version}, verified ${layout.verifiedOn})`,
           hint: 'Run "earth-studio-agent probe" to see the attribute rows this project shows, then update src/driver/selectors.ts.'
+        });
+      }
+      const needed = path.keyframes.at(-1)?.frame ?? 0;
+      const lastFrame = await findLastFrame(this.page);
+      if (lastFrame !== null && lastFrame > 0 && lastFrame < needed) {
+        const seconds = ((needed + 1) / path.frameRate).toFixed(1);
+        throw new AgentError("DRIVER_FRAME_SEEK_FAILED", `This path is longer than the project.`, {
+          detail: `It needs ${needed + 1} frames (${seconds}s at ${path.frameRate}fps); the timeline ends at frame ${lastFrame}.`,
+          hint: `Lengthen the project in Earth Studio - its duration is in the project settings - or shorten the path. Nothing has been written.`
         });
       }
       const results = [];

@@ -170,7 +170,11 @@ async function step(page: PageLike, delta: number, maxPresses: number): Promise<
 }
 
 /** The last frame of the project, found with End. Null when it cannot be read. */
-async function findLastFrame(page: PageLike, readout: string, settleMs: number): Promise<number | null> {
+export async function findLastFrame(
+  page: PageLike,
+  readout: string = READOUT,
+  settleMs = 250,
+): Promise<number | null> {
   if (page.keyboard === undefined) return null;
   try {
     await releaseFocus(page);

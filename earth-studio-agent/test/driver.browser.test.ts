@@ -328,6 +328,33 @@ describe('driver against a real browser', () => {
     await page.close();
   });
 
+  test('refuses a path longer than the project before writing anything', async (t) => {
+    const reason = skip();
+    if (reason !== false) return t.skip(reason);
+    const page = await open();
+    // A live run wrote three keyframes and then found the fourth was past the
+    // end of the timeline, leaving the project half done. The length is one
+    // keypress to check, so it is checked first.
+    await page.evaluate(() => {
+      (window as unknown as { __lastFrame: number }).__lastFrame = 60;
+    });
+    const { path } = await planCameraPath('fly to Rome. hold 10 seconds. then fly to Cairo');
+    assert.ok((path.keyframes.at(-1)?.frame ?? 0) > 60, 'the plan must be longer than the project');
+
+    await assert.rejects(
+      () => new EarthStudioDriver(page as unknown as PageLike).applyPath(path),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_FRAME_SEEK_FAILED');
+        assert.match(error.detail ?? '', /ends at frame 60/);
+        assert.match(error.hint ?? '', /Nothing has been written/);
+        return true;
+      },
+    );
+    assert.deepEqual(await recorded(page), [], 'nothing should have been written');
+    await page.close();
+  });
+
   test('a long multi-place path is written in full', async (t) => {
     const reason = skip();
     if (reason !== false) return t.skip(reason);

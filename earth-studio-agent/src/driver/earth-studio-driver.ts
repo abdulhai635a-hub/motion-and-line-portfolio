@@ -30,7 +30,7 @@ import {
 } from './selectors.ts';
 import type { PageLike } from './page.ts';
 import { writeAttribute, type WriteResult } from './attribute-writer.ts';
-import { readFrame, seekToFrame } from './playhead.ts';
+import { findLastFrame, readFrame, seekToFrame } from './playhead.ts';
 
 export const EARTH_STUDIO_URL = 'https://earth.google.com/studio/';
 
@@ -170,6 +170,21 @@ export class EarthStudioDriver {
       throw new AgentError('DRIVER_LAYOUT_MISMATCH', 'The Earth Studio page does not expose the fields the driver needs.', {
         detail: `Missing: ${layout.missing.join(', ')} (selector set ${layout.version}, verified ${layout.verifiedOn})`,
         hint: 'Run "earth-studio-agent probe" to see the attribute rows this project shows, then update src/driver/selectors.ts.',
+      });
+    }
+
+    // A path longer than the project cannot be written, and finding that out on
+    // the last keyframe leaves the project half-written. It is one keypress to
+    // ask first.
+    const needed = path.keyframes.at(-1)?.frame ?? 0;
+    const lastFrame = await findLastFrame(this.page);
+    if (lastFrame !== null && lastFrame > 0 && lastFrame < needed) {
+      const seconds = ((needed + 1) / path.frameRate).toFixed(1);
+      throw new AgentError('DRIVER_FRAME_SEEK_FAILED', `This path is longer than the project.`, {
+        detail: `It needs ${needed + 1} frames (${seconds}s at ${path.frameRate}fps); the timeline ends at frame ${lastFrame}.`,
+        hint:
+          `Lengthen the project in Earth Studio - its duration is in the project settings - ` +
+          `or shorten the path. Nothing has been written.`,
       });
     }
 
