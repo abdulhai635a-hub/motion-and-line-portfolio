@@ -17,7 +17,7 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
-import { planCameraPath } from './agent.ts';
+import { defaultElevation, planCameraPath } from './agent.ts';
 import { AgentError, isAgentError } from './errors.ts';
 import { renderCsv, renderDriveReport, renderLayoutReport, renderPathLog, formatWarning } from './log.ts';
 import { buildEspProject } from './esp.ts';
@@ -75,6 +75,8 @@ Project (PRD 8 defaults)
                            left alone
   --start-altitude <m>     altitude of the opening pose, default 10000000
   --no-implicit-start      do not prepend an establishing pose
+  --sea-level              do not look the ground height up; write altitudes as
+                           if the ground were at sea level (offline runs)
 
 Places
   --online                 also query OpenStreetMap for unknown places
@@ -186,6 +188,7 @@ function readArgs(argv: string[]): Cli {
       fov: { type: 'string' },
       'start-altitude': { type: 'string' },
       'no-implicit-start': { type: 'boolean' },
+      'sea-level': { type: 'boolean' },
       online: { type: 'boolean' },
       'confirm-ambiguous': { type: 'boolean' },
       'cache-file': { type: 'string' },
@@ -360,6 +363,10 @@ async function plan(cli: Cli): Promise<Awaited<ReturnType<typeof planCameraPath>
     config: overrides,
     geocoder,
     implicitStart: cli.values['no-implicit-start'] === true ? false : undefined,
+    // Earth Studio's altitude is measured from sea level; a shot is described
+    // from the ground. Looking the ground up is the difference between a close
+    // pass and a camera buried under a mountain.
+    elevation: cli.values['sea-level'] === true ? undefined : defaultElevation(),
     onAmbiguous: cli.values['confirm-ambiguous'] === true ? askWhichPlace : undefined,
   });
 

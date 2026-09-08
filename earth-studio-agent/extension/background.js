@@ -50,6 +50,91 @@
     return [{ method: "Input.insertText", params: { text } }];
   }
 
+  // src/errors.ts
+  var AgentError = class extends Error {
+    code;
+    /** 1-based step index, when the failure belongs to a specific step. */
+    stepIndex;
+    /** Extra context shown under the message in CLI output. */
+    detail;
+    /** What the user can do about it. */
+    hint;
+    constructor(code, message, options = {}) {
+      super(message, { cause: options.cause });
+      this.name = "AgentError";
+      this.code = code;
+      this.stepIndex = options.stepIndex;
+      this.detail = options.detail;
+      this.hint = options.hint;
+    }
+    /** Multi-line rendering used by the CLI and the run log. */
+    format() {
+      const where = this.stepIndex === void 0 ? "" : ` (step ${this.stepIndex})`;
+      const lines = [`[${this.code}]${where} ${this.message}`];
+      if (this.detail) lines.push(`  detail: ${this.detail}`);
+      if (this.hint) lines.push(`  hint:   ${this.hint}`);
+      return lines.join("\n");
+    }
+  };
+
+  // src/geocode/elevation.ts
+  function createElevationProvider(options = {}) {
+    const {
+      endpoint = "https://api.open-meteo.com/v1/elevation",
+      timeoutMs = 1e4,
+      fetchImpl = globalThis.fetch,
+      batchSize = 100
+    } = options;
+    return async (points) => {
+      if (points.length === 0) return [];
+      if (typeof fetchImpl !== "function") {
+        throw new AgentError("GEOCODER_UNAVAILABLE", "No fetch implementation is available for the elevation lookup.");
+      }
+      const heights = [];
+      for (let start = 0; start < points.length; start += batchSize) {
+        const batch = points.slice(start, start + batchSize);
+        const latitudes = batch.map((point) => point.latitude.toFixed(6)).join(",");
+        const longitudes = batch.map((point) => point.longitude.toFixed(6)).join(",");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetchImpl(`${endpoint}?latitude=${latitudes}&longitude=${longitudes}`, {
+            signal: controller.signal,
+            headers: { accept: "application/json" }
+          });
+          if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+          const body = await response.json();
+          const values = Array.isArray(body.elevation) ? body.elevation : [];
+          for (let i = 0; i < batch.length; i += 1) {
+            const value = values[i];
+            heights.push(typeof value === "number" && Number.isFinite(value) ? value : null);
+          }
+        } catch (cause) {
+          for (let i = 0; i < batch.length; i += 1) heights.push(null);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      return heights;
+    };
+  }
+  function cachedElevation(provider, cache = /* @__PURE__ */ new Map()) {
+    return async (points) => {
+      const keys = points.map((point) => `${point.latitude.toFixed(3)},${point.longitude.toFixed(3)}`);
+      const wanted = /* @__PURE__ */ new Map();
+      for (const [index, key] of keys.entries()) {
+        const point = points[index];
+        if (point !== void 0 && !cache.has(key)) wanted.set(key, point);
+      }
+      if (wanted.size > 0) {
+        const asked = [...wanted.keys()];
+        const found = await provider([...wanted.values()]);
+        asked.forEach((key, index) => cache.set(key, found[index] ?? null));
+      }
+      return keys.map((key) => cache.get(key) ?? null);
+    };
+  }
+
   // src/extension/background.ts
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {
   });
@@ -85,7 +170,12 @@
     }
     scheduleRelease(tabId);
   }
+  var elevation = cachedElevation(createElevationProvider());
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "elevation") {
+      elevation(message.points ?? []).then((heights) => sendResponse({ ok: true, heights })).catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      return true;
+    }
     if (message.type !== "input") return void 0;
     const tabId = sender.tab?.id;
     if (tabId === void 0) {

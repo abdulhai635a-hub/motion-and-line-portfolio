@@ -9,6 +9,7 @@
  * run is over.
  */
 import { clickCommands, keyCommands, textCommands, type CdpCommand } from './cdp-input.ts';
+import { cachedElevation, createElevationProvider, type Point } from '../geocode/elevation.ts';
 
 interface DebuggerTarget { tabId: number }
 declare const chrome: {
@@ -19,7 +20,15 @@ declare const chrome: {
     onMessage: {
       addListener(
         handler: (
-          message: { type?: string; action?: string; x?: number; y?: number; key?: string; text?: string },
+          message: {
+            type?: string;
+            action?: string;
+            x?: number;
+            y?: number;
+            key?: string;
+            text?: string;
+            points?: Point[];
+          },
           sender: { tab?: { id?: number } },
           sendResponse: (response: unknown) => void,
         ) => boolean | undefined,
@@ -81,7 +90,20 @@ async function run(tabId: number, commands: CdpCommand[]): Promise<void> {
   scheduleRelease(tabId);
 }
 
+/**
+ * How high the ground is. Asked for here rather than from the page: the worker
+ * has the host permission, so there is no cross-origin question to lose on.
+ */
+const elevation = cachedElevation(createElevationProvider());
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'elevation') {
+    elevation(message.points ?? [])
+      .then((heights) => sendResponse({ ok: true, heights }))
+      .catch((error: unknown) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
   if (message.type !== 'input') return undefined;
   const tabId = sender.tab?.id;
   if (tabId === undefined) {

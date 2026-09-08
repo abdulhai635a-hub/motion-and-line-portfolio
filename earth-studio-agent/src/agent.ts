@@ -10,6 +10,7 @@ import { makeConfig, type DeepPartial, type SessionConfig } from './config.ts';
 import { parseCommand } from './parser.ts';
 import { applyProjectSettings, noteWarnings } from './plan-settings.ts';
 import { Geocoder, createNominatimProvider, offlineProvider, type GeocodeProvider } from './geocode/index.ts';
+import { cachedElevation, createElevationProvider, type ElevationProvider } from './geocode/elevation.ts';
 import { buildTimeline, resolveSteps } from './timeline.ts';
 
 export interface PlanOptions {
@@ -21,6 +22,13 @@ export interface PlanOptions {
   /** Prepend an establishing pose when the command does not start with one. */
   implicitStart?: boolean;
   onAmbiguous?: (place: GeoPlace, stepIndex: number) => Promise<GeoPlace>;
+  /**
+   * Where the ground height comes from, so altitudes are written above the
+   * ground rather than above the sea. Left out, the plan is still built and
+   * says in a warning that it assumed sea level - which keeps this module
+   * off the network unless a caller asks for it.
+   */
+  elevation?: ElevationProvider;
 }
 
 export interface PlanResult {
@@ -43,6 +51,7 @@ export async function planCameraPath(command: string, options: PlanOptions = {})
   const resolved = await resolveSteps(steps, geocoder, config, {
     implicitStart: options.implicitStart,
     onAmbiguous: options.onAmbiguous,
+    elevation: options.elevation,
   });
 
   const warnings = [...resolved.warnings, ...settings.warnings, ...noteWarnings(notes)];
@@ -54,6 +63,13 @@ export async function planCameraPath(command: string, options: PlanOptions = {})
   return { path, config, ignored };
 }
 
+/** One elevation service per process, so a plan asks about each place once. */
+let sharedElevation: ElevationProvider | undefined;
+export function defaultElevation(): ElevationProvider {
+  sharedElevation = sharedElevation ?? cachedElevation(createElevationProvider());
+  return sharedElevation;
+}
+
 export function defaultGeocoder(config: SessionConfig, online: boolean): Geocoder {
   const providers: GeocodeProvider[] = [offlineProvider];
   if (online) providers.push(createNominatimProvider());
@@ -62,6 +78,7 @@ export function defaultGeocoder(config: SessionConfig, online: boolean): Geocode
 
 export { parseCommand } from './parser.ts';
 export { applyProjectSettings, noteWarnings } from './plan-settings.ts';
+export { createElevationProvider, cachedElevation } from './geocode/elevation.ts';
 export { Geocoder } from './geocode/index.ts';
 export { buildTimeline, resolveSteps } from './timeline.ts';
 export { makeConfig, DEFAULT_CONFIG, DEFAULT_ALTITUDE_TABLE } from './config.ts';

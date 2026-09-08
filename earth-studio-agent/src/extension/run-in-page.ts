@@ -13,6 +13,7 @@ import { parseCommand } from '../parser.ts';
 import { applyProjectSettings, noteWarnings } from '../plan-settings.ts';
 import { buildTimeline, resolveSteps } from '../timeline.ts';
 import { Geocoder, createNominatimProvider, offlineProvider } from '../geocode/index.ts';
+import type { ElevationProvider } from '../geocode/elevation.ts';
 import { EarthStudioDriver, type DriveReport, type LayoutReport } from '../driver/earth-studio-driver.ts';
 import { AgentError } from '../errors.ts';
 import { DomPage } from './dom-page.ts';
@@ -23,6 +24,12 @@ export interface RunOptions {
   config?: DeepPartial<SessionConfig>;
   /** Look unknown places up on OpenStreetMap. Needs host permission. */
   online?: boolean;
+  /**
+   * How high the ground is under each place. Earth Studio measures altitude
+   * from sea level, so without this a close pass over high land is written
+   * underground and the frame comes out black.
+   */
+  elevation?: ElevationProvider;
   language?: TranslateOptions;
   /** Report progress to the panel as the run goes. */
   onProgress?: (event: ProgressReport) => void;
@@ -68,7 +75,10 @@ export async function runCommandInPage(command: string, options: RunOptions = {}
   const geocoder = new Geocoder({ providers, ambiguityRatio: config.ambiguityRatio });
 
   const { steps, ignored, notes } = parsed;
-  const resolved = await resolveSteps(steps, geocoder, config);
+  // Earth Studio measures altitude from sea level; a shot is described from the
+  // ground. Without the ground height a close pass over high land puts the
+  // camera underground, and the frame comes out black.
+  const resolved = await resolveSteps(steps, geocoder, config, { elevation: options.elevation });
   const warnings: Warning[] = [...resolved.warnings, ...settings.warnings, ...noteWarnings(notes)];
   for (const clause of ignored) {
     warnings.push({ code: 'CLAUSE_IGNORED', message: `Could not interpret "${clause}"; it was left out.` });

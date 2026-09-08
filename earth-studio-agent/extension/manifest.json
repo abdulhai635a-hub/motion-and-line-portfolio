@@ -11,7 +11,8 @@
     "debugger"
   ],
   "host_permissions": [
-    "https://earth.google.com/*"
+    "https://earth.google.com/*",
+    "https://api.open-meteo.com/*"
   ],
   "optional_host_permissions": [
     "https://nominatim.openstreetmap.org/*"

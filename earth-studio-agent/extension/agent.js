@@ -1203,7 +1203,7 @@ var EarthStudioAgent = (() => {
 
   // src/timeline.ts
   async function resolveSteps(parsed, geocoder, config, options = {}) {
-    const { implicitStart = true, onAmbiguous } = options;
+    const { implicitStart = true, onAmbiguous, elevation } = options;
     const warnings = [];
     const tabled = parsed.some((step2) => step2.atSeconds !== null);
     if (tabled) {
@@ -1346,6 +1346,7 @@ var EarthStudioAgent = (() => {
         altitude: altitude.value,
         duration: duration.value,
         altitudeSource: altitude.source,
+        groundElevation: null,
         durationSource: duration.source,
         tilt: tilt.value,
         tiltSource: tilt.source,
@@ -1364,7 +1365,48 @@ var EarthStudioAgent = (() => {
         else break;
       }
     }
+    await addGroundElevation(resolved, warnings, elevation);
     return { steps: resolved, warnings };
+  }
+  async function addGroundElevation(resolved, warnings, elevation) {
+    const needsGround = resolved.some((step2) => step2.place !== null);
+    if (!needsGround) return;
+    if (elevation === void 0) {
+      if (resolved.some((step2) => step2.altitudeSource !== "explicit" && step2.altitude < 5e3)) {
+        warnings.push({
+          code: "GROUND_UNKNOWN",
+          message: "The height of the ground could not be looked up, so altitudes are written as if the ground were at sea level. Over high ground that puts the camera underground, and Earth Studio shows a black frame."
+        });
+      }
+      return;
+    }
+    const heights = await elevation(
+      resolved.map((step2) => ({ latitude: step2.place?.latitude ?? 0, longitude: step2.place?.longitude ?? 0 }))
+    );
+    let unknown = 0;
+    for (const [index, step2] of resolved.entries()) {
+      const ground = heights[index] ?? null;
+      if (ground === null) {
+        unknown += 1;
+        continue;
+      }
+      step2.groundElevation = ground;
+      if (step2.altitudeSource === "explicit") {
+        if (step2.altitude < ground) {
+          warnings.push({
+            code: "ALTITUDE_UNDERGROUND",
+            stepIndex: step2.index,
+            message: `Step ${step2.index} asks for ${Math.round(step2.altitude)} m, but the ground at ${step2.place?.name ?? "this place"} is about ${Math.round(ground)} m above sea level. Earth Studio measures altitude from sea level, so this keyframe is underground - the frame will be black.`
+          });
+        }
+      }
+    }
+    if (unknown > 0 && resolved.some((step2) => step2.altitudeSource !== "explicit" && step2.altitude < 5e3)) {
+      warnings.push({
+        code: "GROUND_UNKNOWN",
+        message: `The height of the ground could not be looked up for ${unknown} of ${resolved.length} steps, so those altitudes are written as if the ground were at sea level.`
+      });
+    }
   }
   function decideAltitude(step2, placeKind, previous, config) {
     if (step2.altitudeMeters !== null) {
@@ -1500,7 +1542,9 @@ var EarthStudioAgent = (() => {
     const camera = {
       latitude: place.latitude,
       longitude: place.longitude,
-      altitude: step2.altitude,
+      // Above the ground, as the shot was described; Earth Studio's field is
+      // measured from sea level, so the ground is added on the way in.
+      altitude: step2.altitudeSource === "explicit" ? step2.altitude : step2.altitude + (step2.groundElevation ?? 0),
       pan: step2.pan,
       tilt: step2.tilt,
       roll: step2.roll,
@@ -2767,7 +2811,7 @@ var EarthStudioAgent = (() => {
     if (options.online === true) providers.push(createNominatimProvider());
     const geocoder = new Geocoder({ providers, ambiguityRatio: config.ambiguityRatio });
     const { steps, ignored, notes } = parsed;
-    const resolved = await resolveSteps(steps, geocoder, config);
+    const resolved = await resolveSteps(steps, geocoder, config, { elevation: options.elevation });
     const warnings = [...resolved.warnings, ...settings.warnings, ...noteWarnings(notes)];
     for (const clause of ignored) {
       warnings.push({ code: "CLAUSE_IGNORED", message: `Could not interpret "${clause}"; it was left out.` });

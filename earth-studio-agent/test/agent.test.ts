@@ -80,7 +80,9 @@ describe('planCameraPath', () => {
       'Then zoom out to country level.',
       'Hold 1 second.',
     ].join('\n');
-    const { path } = await planCameraPath(command);
+    // With the ground known there is nothing to warn about; without it, the
+    // plan says so, because a close pass over high land would be underground.
+    const { path } = await planCameraPath(command, { elevation: async (points) => points.map(() => 0) });
     assert.equal(path.warnings.length, 0, JSON.stringify(path.warnings));
     assert.equal(path.steps.length, 9);
     assert.deepEqual(

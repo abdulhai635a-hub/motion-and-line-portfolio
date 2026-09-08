@@ -53,6 +53,17 @@ export function renderPathLog(path: CameraPath): string {
   if (!path.writeFieldOfView) {
     lines.push("  fov is left as the project has it - name one (\"field of view 30\") to set it.");
   }
+  // The two tables measure altitude differently on purpose, and silently
+  // disagreeing numbers are worse than a line explaining why.
+  const ground = path.steps.find((step) => step.groundElevation !== null)?.groundElevation;
+  if (ground !== undefined && ground !== null) {
+    lines.push(
+      '  altitude above is measured from sea level, as Earth Studio measures it: the height above the',
+    );
+    lines.push(
+      `  ground in the table above, plus the ground itself (${Math.round(ground)} m at the first place).`,
+    );
+  }
 
   const warnings = path.warnings;
   if (warnings.length > 0) {

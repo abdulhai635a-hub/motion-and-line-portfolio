@@ -19,7 +19,10 @@ export interface TrustedInput {
 }
 
 interface Messenger {
-  sendMessage(message: unknown, callback: (response: { ok?: boolean; error?: string } | undefined) => void): void;
+  sendMessage(
+    message: unknown,
+    callback: (response: { ok?: boolean; error?: string; heights?: Array<number | null> } | undefined) => void,
+  ): void;
   lastError?: { message: string };
 }
 
@@ -57,4 +60,23 @@ export function extensionInput(runtime: Messenger): TrustedInput {
     type: (text: string) => ask({ action: 'text', text }),
     release: () => ask({ action: 'release' }).catch(() => undefined),
   };
+}
+
+/**
+ * How high the ground is, asked of the service worker.
+ *
+ * The lookup could be made from the page, but a content script's fetch is a
+ * cross-origin request from earth.google.com and lives or dies by what the
+ * other end allows. The worker has the host permission and no such question.
+ */
+export function extensionElevation(runtime: Messenger) {
+  return async (points: Array<{ latitude: number; longitude: number }>): Promise<Array<number | null>> =>
+    new Promise((resolve) => {
+      runtime.sendMessage({ type: 'elevation', points }, (response) => {
+        // Not knowing the ground is a warning the plan already carries, never a
+        // reason to refuse to write it.
+        if (runtime.lastError !== undefined || response?.ok !== true) return resolve(points.map(() => null));
+        resolve(response.heights ?? points.map(() => null));
+      });
+    });
 }

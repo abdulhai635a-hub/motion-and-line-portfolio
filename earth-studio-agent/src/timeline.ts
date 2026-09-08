@@ -21,6 +21,7 @@ import type { SessionConfig } from './config.ts';
 import { AgentError } from './errors.ts';
 import type { Geocoder } from './geocode/index.ts';
 import { smartDuration, smartTilt } from './smart.ts';
+import type { ElevationProvider } from './geocode/elevation.ts';
 
 export interface ResolveResult {
   steps: ResolvedStep[];
@@ -40,6 +41,13 @@ export interface ResolveOptions {
    * automatic choice. PRD 12 leaves this open; both behaviours are supported.
    */
   onAmbiguous?: (place: GeoPlace, stepIndex: number) => Promise<GeoPlace>;
+  /**
+   * How high the ground is under each step. Earth Studio measures altitude from
+   * sea level; a shot is described from the ground. Without this the camera
+   * ends up underground anywhere the land is high, and the frame comes out
+   * black.
+   */
+  elevation?: ElevationProvider;
 }
 
 export async function resolveSteps(
@@ -48,7 +56,7 @@ export async function resolveSteps(
   config: SessionConfig,
   options: ResolveOptions = {},
 ): Promise<ResolveResult> {
-  const { implicitStart = true, onAmbiguous } = options;
+  const { implicitStart = true, onAmbiguous, elevation } = options;
   const warnings: Warning[] = [];
 
   // A keyframe table already says where the shot opens, so nothing is put in
@@ -237,6 +245,7 @@ export async function resolveSteps(
       altitude: altitude.value,
       duration: duration.value,
       altitudeSource: altitude.source,
+      groundElevation: null,
       durationSource: duration.source,
       tilt: tilt.value,
       tiltSource: tilt.source,
@@ -260,7 +269,71 @@ export async function resolveSteps(
     }
   }
 
+  await addGroundElevation(resolved, warnings, elevation);
   return { steps: resolved, warnings };
+}
+
+/**
+ * Puts each step's altitude above the ground rather than above the sea.
+ *
+ * An altitude the command stated is left exactly as written - a plan that says
+ * "800,000 m" means the number that goes in the field - but if that number is
+ * under the ground it is worth saying so, because Earth Studio's answer to a
+ * camera below the surface is a black frame and no other clue.
+ */
+async function addGroundElevation(
+  resolved: ResolvedStep[],
+  warnings: Warning[],
+  elevation: ElevationProvider | undefined,
+): Promise<void> {
+  const needsGround = resolved.some((step) => step.place !== null);
+  if (!needsGround) return;
+
+  if (elevation === undefined) {
+    if (resolved.some((step) => step.altitudeSource !== 'explicit' && step.altitude < 5_000)) {
+      warnings.push({
+        code: 'GROUND_UNKNOWN',
+        message:
+          'The height of the ground could not be looked up, so altitudes are written as if the ground were at ' +
+          'sea level. Over high ground that puts the camera underground, and Earth Studio shows a black frame.',
+      });
+    }
+    return;
+  }
+
+  const heights = await elevation(
+    resolved.map((step) => ({ latitude: step.place?.latitude ?? 0, longitude: step.place?.longitude ?? 0 })),
+  );
+
+  let unknown = 0;
+  for (const [index, step] of resolved.entries()) {
+    const ground = heights[index] ?? null;
+    if (ground === null) {
+      unknown += 1;
+      continue;
+    }
+    step.groundElevation = ground;
+    if (step.altitudeSource === 'explicit') {
+      if (step.altitude < ground) {
+        warnings.push({
+          code: 'ALTITUDE_UNDERGROUND',
+          stepIndex: step.index,
+          message:
+            `Step ${step.index} asks for ${Math.round(step.altitude)} m, but the ground at ` +
+            `${step.place?.name ?? 'this place'} is about ${Math.round(ground)} m above sea level. ` +
+            'Earth Studio measures altitude from sea level, so this keyframe is underground - the frame will be black.',
+        });
+      }
+    }
+  }
+  if (unknown > 0 && resolved.some((step) => step.altitudeSource !== 'explicit' && step.altitude < 5_000)) {
+    warnings.push({
+      code: 'GROUND_UNKNOWN',
+      message:
+        `The height of the ground could not be looked up for ${unknown} of ${resolved.length} steps, so those ` +
+        'altitudes are written as if the ground were at sea level.',
+    });
+  }
 }
 
 interface AltitudeDecision {
@@ -465,7 +538,9 @@ function makeKeyframe(
   const camera: CameraState = {
     latitude: place.latitude,
     longitude: place.longitude,
-    altitude: step.altitude,
+    // Above the ground, as the shot was described; Earth Studio's field is
+    // measured from sea level, so the ground is added on the way in.
+    altitude: step.altitudeSource === 'explicit' ? step.altitude : step.altitude + (step.groundElevation ?? 0),
     pan: step.pan,
     tilt: step.tilt,
     roll: step.roll,

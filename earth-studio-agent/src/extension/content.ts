@@ -6,7 +6,7 @@
  * a command from the panel, run it, and stream progress back.
  */
 import { runCommandInPage, type ProgressReport, type RunOptions } from './run-in-page.ts';
-import { extensionInput } from './trusted-input.ts';
+import { extensionElevation, extensionInput } from './trusted-input.ts';
 import { isAgentError } from '../errors.ts';
 
 interface RuntimeMessage {
@@ -46,6 +46,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // Real browser input, sent by the service worker. Earth Studio's fields
     // ignore anything a script dispatches itself.
     input: extensionInput(chrome.runtime),
+    // The worker asks how high the ground is; Earth Studio's altitude field is
+    // measured from sea level, and a shot is described from the ground.
+    elevation: extensionElevation(chrome.runtime),
     onProgress: (progress: ProgressReport) => chrome.runtime.sendMessage({ type: 'progress', progress }),
   })
     .then((result) => {

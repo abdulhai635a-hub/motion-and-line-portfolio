@@ -262,6 +262,23 @@ Pass `--transition`, `--tilt` or `--fov` (or fill the matching box in the
 extension's Settings) only when you want one fixed value on every step; naming a
 setting is what turns its automatic behaviour off.
 
+### Altitude is above the ground, not above the sea
+
+Earth Studio's altitude field is measured from sea level. A camera move is
+described from the ground - "1,500 m over the site" means 1,500 m of air below
+the camera - so the ground is looked up (Open-Meteo, no key) and added on the
+way in. Over the sea the two agree; over Shute Creek in Wyoming they are 2,050 m
+apart, and writing the plan's number straight into the field put the camera half
+a kilometre underground, which Earth Studio renders as a black frame and no
+other clue.
+
+An altitude the command states itself is written exactly as stated - a keyframe
+table gives field values, not heights above the ground - but if one of them is
+below the ground, the plan says so.
+
+Pass `--sea-level` to skip the lookup (offline runs); the plan is still built,
+with a warning that it assumed sea level.
+
 ## Default zoom/altitude table (PRD 8)
 
 | Descriptor | Altitude |

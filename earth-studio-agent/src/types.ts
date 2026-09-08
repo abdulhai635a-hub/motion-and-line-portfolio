@@ -100,6 +100,12 @@ export interface ResolvedStep {
   duration: number;
   /** How the altitude was decided, for the log. */
   altitudeSource: 'explicit' | 'descriptor' | 'place-kind' | 'inherited';
+  /**
+   * Height of the ground here, above sea level, when it could be looked up.
+   * Earth Studio measures the camera from sea level while a shot is described
+   * from the ground, so this is what stands between the two.
+   */
+  groundElevation: number | null;
   /** How the duration was decided, for the log. */
   durationSource: 'explicit' | 'automatic' | 'default';
   /** Tilt written at this step's keyframe. */
