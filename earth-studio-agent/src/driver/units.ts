@@ -74,10 +74,25 @@ export function parseDisplayedNumber(text: string): number {
 /**
  * How close a read-back has to be to count as correct.
  *
- * The display rounds to three decimals, so a value can never be confirmed more
- * precisely than that, whatever was typed.
+ * A value can never be confirmed more precisely than the display can show it,
+ * and how precise that is depends on the number on screen. Earth Studio shows
+ * an altitude in whole kilometres once it is large enough to switch units: a
+ * camera at 151,743 m reads "152" km, which is 257 m away from what was typed
+ * and perfectly correct. Reading that as a failed write cost a live run its
+ * fourth keyframe.
+ *
+ * So the tolerance is half of whatever the last displayed digit is worth. Pass
+ * the text on screen to work that out; without it, three decimals is assumed,
+ * which is what the angles show.
  */
-export function readbackTolerance(planned: number, metresPerDisplay: number): number {
-  const displayRounding = 0.0005 * metresPerDisplay * 2;
-  return Math.max(displayRounding, Math.abs(planned) * 1e-5);
+export function readbackTolerance(planned: number, metresPerDisplay: number, displayed?: string): number {
+  const step = displayStep(displayed) * metresPerDisplay;
+  return Math.max(step / 2, Math.abs(planned) * 1e-5);
+}
+
+/** What the last digit of a displayed number is worth, in its own unit. */
+export function displayStep(displayed: string | undefined): number {
+  if (displayed === undefined) return 0.001;
+  const digits = /\.(\d+)/.exec(displayed.replace(/[^0-9.,-]/g, ''));
+  return digits === null ? 1 : 10 ** -digits[1]!.length;
 }

@@ -1895,9 +1895,14 @@ var EarthStudioAgent = (() => {
     const value = Number.parseFloat(cleaned);
     return Number.isFinite(value) ? value : Number.NaN;
   }
-  function readbackTolerance(planned, metresPerDisplay) {
-    const displayRounding = 5e-4 * metresPerDisplay * 2;
-    return Math.max(displayRounding, Math.abs(planned) * 1e-5);
+  function readbackTolerance(planned, metresPerDisplay, displayed) {
+    const step2 = displayStep(displayed) * metresPerDisplay;
+    return Math.max(step2 / 2, Math.abs(planned) * 1e-5);
+  }
+  function displayStep(displayed) {
+    if (displayed === void 0) return 1e-3;
+    const digits = /\.(\d+)/.exec(displayed.replace(/[^0-9.,-]/g, ""));
+    return digits === null ? 1 : 10 ** -digits[1].length;
   }
 
   // src/driver/attribute-writer.ts
@@ -1985,7 +1990,11 @@ var EarthStudioAgent = (() => {
       const value = parseDisplayedNumber(row2.displayed);
       return target.plannedUnit === "metres" ? value * metresPerDisplayUnit(row2.unitTitle) : value;
     };
-    const toleranceFor = (row2) => readbackTolerance(planned, target.plannedUnit === "metres" ? metresPerDisplayUnit(row2.unitTitle) : 1);
+    const toleranceFor = (row2) => readbackTolerance(
+      planned,
+      target.plannedUnit === "metres" ? metresPerDisplayUnit(row2.unitTitle) : 1,
+      row2.displayed
+    );
     const deadline = Date.now() + settleTimeoutMs;
     let after = await readRow(page, target, row);
     let readback = toPlanned(after);

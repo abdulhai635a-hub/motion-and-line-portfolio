@@ -268,6 +268,19 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('accepts an altitude the field can only show in whole kilometres', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // 151,743 m comes back as "152" km - 257 m out, and all the field can say.
+    // A live run called that a failed write and stopped on its fourth keyframe.
+    const result = await writeAttribute(page as unknown as PageLike, ALTITUDE, 151_743);
+    assert.equal(result.typed, 151_743);
+    assert.equal(await shown(page, 'altitude'), '152');
+    assert.ok(Math.abs(result.readback - 151_743) < 500, `read back ${result.readback}`);
+    await page.close();
+  });
+
   test('adds a keyframe after committing the value', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

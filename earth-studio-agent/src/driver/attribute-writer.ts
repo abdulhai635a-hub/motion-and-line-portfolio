@@ -195,7 +195,11 @@ export async function writeAttribute(
     return target.plannedUnit === 'metres' ? value * metresPerDisplayUnit(row.unitTitle) : value;
   };
   const toleranceFor = (row: RowState): number =>
-    readbackTolerance(planned, target.plannedUnit === 'metres' ? metresPerDisplayUnit(row.unitTitle) : 1);
+    readbackTolerance(
+      planned,
+      target.plannedUnit === 'metres' ? metresPerDisplayUnit(row.unitTitle) : 1,
+      row.displayed,
+    );
 
   // Poll rather than read once: the readout catches up a moment after Enter.
   const deadline = Date.now() + settleTimeoutMs;

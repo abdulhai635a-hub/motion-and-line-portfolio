@@ -220,7 +220,10 @@
           setTimeout(function () {
             if (type === 'altitude') {
               var shown = altitudeDisplay(typed);
-              presented.textContent = String(Math.round(shown.value * 1000) / 1000);
+              // The live editor shows an altitude in whole units - "63170" km,
+              // "1500" m - so a value typed in metres comes back rounded to the
+              // nearest kilometre once the field has switched.
+              presented.textContent = String(Math.round(shown.value));
               if (unit) {
                 unit.textContent = shown.unit;
                 unit.setAttribute('title', shown.title);

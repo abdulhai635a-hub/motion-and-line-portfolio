@@ -89,14 +89,33 @@ describe('parseDisplayedNumber', () => {
 });
 
 describe('readbackTolerance', () => {
-  test('accepts what the three-decimal display can actually show', () => {
-    // 1500 m shown in kilometres is "1.5", so a metre of slack is needed.
-    assert.ok(readbackTolerance(1500, 1000) >= 1);
-    // Degrees need only the rounding itself.
-    assert.ok(readbackTolerance(29.323, 1) < 0.01);
+  test('allows half of whatever the last displayed digit is worth', () => {
+    // "1.5" km can only be read to the nearest 100 m.
+    assert.equal(readbackTolerance(1500, 1000, '1.5'), 50);
+    // "1500" m is exact to the metre.
+    assert.equal(readbackTolerance(1500, 1, '1500'), 0.5);
+    // Degrees at three decimals need only the rounding itself.
+    assert.ok(readbackTolerance(29.323, 1, '29.323') < 0.01);
+  });
+
+  test('accepts a whole-kilometre display, which a live write failed on', () => {
+    // Earth Studio showed "152" km for the 151,743 m it had just been given.
+    // That is 257 m out and perfectly correct, and rejecting it cost a run its
+    // fourth keyframe.
+    const tolerance = readbackTolerance(151_743, 1000, '152');
+    assert.ok(Math.abs(152_000 - 151_743) <= tolerance, `tolerance was ${tolerance}`);
+  });
+
+  test('does not accept a display that is a whole unit out', () => {
+    // Half a step, not a whole one: "153" km is a different altitude.
+    assert.ok(Math.abs(153_000 - 151_743) > readbackTolerance(151_743, 1000, '152'));
+  });
+
+  test('assumes three decimals when the display is not known', () => {
+    assert.equal(readbackTolerance(1500, 1000), 0.5);
   });
 
   test('grows with the value, so large altitudes still compare', () => {
-    assert.ok(readbackTolerance(10_000_000, 1000) >= 100);
+    assert.ok(readbackTolerance(10_000_000, 1000, '10000') >= 100);
   });
 });
