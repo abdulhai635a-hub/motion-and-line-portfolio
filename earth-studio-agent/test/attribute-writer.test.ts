@@ -281,6 +281,45 @@ describe('writeAttribute', () => {
     await page.close();
   });
 
+  test('does not commit the old value when the typing is lost', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    // A live run typed a longitude, the keystroke went nowhere, Enter committed
+    // what the box still held, and the field came back reading its old value
+    // with nothing to say why.
+    await page.evaluate(() => {
+      (window as unknown as { __swallowTyping: number }).__swallowTyping = 1;
+    });
+
+    const result = await writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606);
+    assert.ok(Math.abs(result.readback - 35.3606) < 0.001, `read back ${result.readback}`);
+    assert.equal(await shown(page, 'latitude'), '35.361');
+    await page.close();
+  });
+
+  test('gives up saying what the box still holds, rather than committing it', async (t) => {
+    const why = skip();
+    if (why !== false) return t.skip(why);
+    const page = await open();
+    await page.evaluate(() => {
+      (window as unknown as { __swallowTyping: number }).__swallowTyping = 99;
+    });
+
+    await assert.rejects(
+      () => writeAttribute(page as unknown as PageLike, LATITUDE, 35.3606, { timeoutMs: 2_000 }),
+      (error: unknown) => {
+        assert.ok(error instanceof AgentError);
+        assert.equal(error.code, 'DRIVER_FIELD_WRITE_FAILED');
+        assert.match(error.detail ?? '', /still reads/);
+        return true;
+      },
+    );
+    // The old value stands: nothing was committed on top of it.
+    assert.equal(await shown(page, 'latitude'), '-15.018');
+    await page.close();
+  });
+
   test('adds a keyframe after committing the value', async (t) => {
     const why = skip();
     if (why !== false) return t.skip(why);

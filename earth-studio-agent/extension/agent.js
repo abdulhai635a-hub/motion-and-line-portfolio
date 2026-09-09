@@ -1275,6 +1275,7 @@ var EarthStudioAgent = (() => {
         });
       }
     }
+    keepPlacesTogether(places, warnings);
     if (places.size === 0 && firstFailure !== null) {
       const queries = warnings.filter((warning) => warning.code === "PLACE_NOT_FOUND").map((warning) => warning.message.split('"')[1] ?? "").filter((query) => query !== "");
       throw new AgentError("PLACE_NOT_FOUND", "None of the places in this command could be found.", {
@@ -1412,6 +1413,65 @@ var EarthStudioAgent = (() => {
         message: `The height of the ground could not be looked up for ${unknown} of ${resolved.length} steps, so those altitudes are written as if the ground were at sea level.`
       });
     }
+  }
+  function keepPlacesTogether(places, warnings) {
+    if (places.size < 2) return;
+    const farKm = 2e3;
+    const restOf = (index) => {
+      const others = [...places.entries()].filter(([at]) => at !== index).map(([, place]) => place);
+      return {
+        latitude: median(others.map((place) => place.latitude)),
+        longitude: median(others.map((place) => place.longitude))
+      };
+    };
+    for (const [index, place] of [...places.entries()]) {
+      const rest = restOf(index);
+      if (groundDistanceKm(place, rest) <= farKm) continue;
+      const nearer = place.alternatives.find((candidate) => groundDistanceKm(candidate, rest) <= farKm);
+      if (nearer === void 0) continue;
+      places.set(index, {
+        ...place,
+        name: nearer.name,
+        latitude: nearer.latitude,
+        longitude: nearer.longitude,
+        kind: nearer.kind,
+        context: nearer.context,
+        ambiguous: true,
+        alternatives: [
+          {
+            name: place.name,
+            latitude: place.latitude,
+            longitude: place.longitude,
+            kind: place.kind,
+            score: 0,
+            context: place.context
+          },
+          ...place.alternatives.filter((candidate) => candidate !== nearer)
+        ]
+      });
+      warnings.push({
+        code: "PLACE_MOVED_NEARER",
+        stepIndex: index,
+        message: `"${place.query}" first matched ${describe(place.name, place.context)}, ${Math.round(groundDistanceKm(place, rest))} km from the rest of this command; ${describe(nearer.name, nearer.context)} was used instead.`
+      });
+    }
+    let worst = null;
+    for (const [index, place] of places.entries()) {
+      const km = groundDistanceKm(place, restOf(index));
+      if (km > farKm && (worst === null || km > worst.km)) worst = { index, place, km };
+    }
+    if (worst !== null) {
+      warnings.push({
+        code: "PLACE_FAR_AWAY",
+        stepIndex: worst.index,
+        message: `"${worst.place.query}" resolved to ${describe(worst.place.name, worst.place.context)}, about ${Math.round(worst.km)} km from the rest of this command. If that is not the one you meant, name it more fully.`
+      });
+    }
+  }
+  function median(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2 : sorted[middle] ?? 0;
   }
   function decideAltitude(step2, placeKind, previous, config) {
     if (step2.altitudeMeters !== null) {
@@ -1965,12 +2025,7 @@ var EarthStudioAgent = (() => {
     const typed = target.plannedUnit === "metres" ? planned / perEdit : planned;
     const editSelector = `${widget} [contenteditable]`;
     const text = formatForField(typed);
-    try {
-      await page.fill(editSelector, text, { timeout: timeoutMs });
-    } catch {
-      await page.keyboard.press("Control+a");
-      await page.keyboard.type(text);
-    }
+    await typeIntoBox(page, target, row, editSelector, text, timeoutMs);
     try {
       await page.press(editSelector, "Enter", { timeout: timeoutMs });
     } catch {
@@ -2007,7 +2062,7 @@ var EarthStudioAgent = (() => {
     }
     if (!Number.isFinite(readback) || Math.abs(readback - planned) > tolerance) {
       throw new AgentError("DRIVER_FIELD_WRITE_FAILED", `The ${target.label} field did not take ${planned}.`, {
-        detail: `Typed ${formatForField(typed)} into a field reading in ${before.unitTitle || "unknown units"} (one edit-box unit = ${perEdit} m); after ${settleTimeoutMs}ms it shows "${after.displayed}" ${after.unitTitle || "in unknown units"}, which is ${readback} against the ${planned} that was wanted.`,
+        detail: `Typed ${formatForField(typed)} into a field reading in ${before.unitTitle || "unknown units"} ${target.plannedUnit === "metres" ? `(one edit-box unit = ${perEdit} m) ` : ""}- after ${settleTimeoutMs}ms it shows "${after.displayed}" ${after.unitTitle || "in unknown units"}, which is ${readback} against the ${planned} that was wanted.`,
         hint: `Selector used: ${widget}`
       });
     }
@@ -2098,6 +2153,44 @@ var EarthStudioAgent = (() => {
     if (!Number.isFinite(value)) return "0";
     if (Number.isInteger(value)) return value.toLocaleString("fullwide", { useGrouping: false, maximumFractionDigits: 0 });
     return value.toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  async function typeIntoBox(page, target, row, editSelector, text, timeoutMs) {
+    const wanted = Number(text);
+    const holds = async () => {
+      const box = (await readRow(page, target, row)).editBox;
+      if (box === null) return false;
+      const value = parseDisplayedNumber(box);
+      return Number.isFinite(wanted) ? Math.abs(value - wanted) < 1e-9 : box.trim() === text;
+    };
+    const attempts = [
+      async () => {
+        await page.fill?.(editSelector, text, { timeout: timeoutMs });
+      },
+      // Select the box's contents the way a person would, then type over them.
+      async () => {
+        await page.click?.(editSelector, { timeout: timeoutMs });
+        await page.keyboard?.press("Control+a");
+        await page.keyboard?.type(text);
+      },
+      async () => {
+        await page.fill?.(editSelector, "", { timeout: timeoutMs });
+        await page.fill?.(editSelector, text, { timeout: timeoutMs });
+      }
+    ];
+    let last = "";
+    for (const attempt of attempts) {
+      try {
+        await attempt();
+      } catch (cause) {
+        last = cause instanceof Error ? cause.message.split("\n")[0] ?? "" : String(cause);
+      }
+      if (await holds()) return;
+      last = (await readRow(page, target, row)).editBox ?? last;
+    }
+    throw new AgentError("DRIVER_FIELD_WRITE_FAILED", `The ${target.label} field would not take ${text}.`, {
+      detail: `The edit box still reads "${last}" after three attempts to type into it.`,
+      hint: `Selector used: ${editSelector}`
+    });
   }
   var GESTURES = ["click", "pointer", "mouse", "native", "dblclick"];
   async function openEditor(page, widget, target, originalRow, timeoutMs) {

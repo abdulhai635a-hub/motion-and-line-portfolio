@@ -153,6 +153,10 @@
   // kills the rest of the handler with it.
   window.__openOn = 'click';
   window.__pointerCaptureThrows = false;
+  // How many times typing into a freshly opened box is thrown away before it
+  // starts landing. Stands in for a keystroke lost to a focus change, which
+  // left a live run committing the value the box already held.
+  window.__swallowTyping = 0;
 
   document.querySelectorAll('.scrub-input').forEach(function (widget) {
     var pressed = false;
@@ -197,6 +201,16 @@
       var restingTitle = unit ? unit.getAttribute('title') : '';
       if (unit && restingTitle === 'Kilometers') unit.setAttribute('title', 'Meters');
       container.appendChild(box);
+      // Each swallowed attempt puts the box back the way it was, so Enter would
+      // commit the old value - which is what a lost keystroke does.
+      var original = box.textContent;
+      var undo = new MutationObserver(function () {
+        if (window.__swallowTyping > 0 && box.textContent !== original) {
+          window.__swallowTyping -= 1;
+          box.textContent = original;
+        }
+      });
+      undo.observe(box, { characterData: true, childList: true, subtree: true });
       widget.classList.add('editing');
       widget.setAttribute('tabindex', '-1');
       box.focus();

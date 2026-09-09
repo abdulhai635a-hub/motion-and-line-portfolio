@@ -291,6 +291,47 @@ describe('buildTimeline', () => {
     assert.ok((path.steps.at(-1)?.duration ?? 0) > 5, `the push-in should be slow, was ${path.steps.at(-1)?.duration}s`);
   });
 
+  test('a stray match is pulled back to where the rest of the command is', async () => {
+    // A brief about the LaBarge/Shute Creek area of Wyoming resolved a step to
+    // Shute Harbour in Queensland, and the shot opened twelve thousand
+    // kilometres from everything else in it.
+    const provider = {
+      name: 'test',
+      async lookup(query: string) {
+        if (query.includes('shute')) {
+          return [
+            { name: 'Shute Harbour', latitude: -20.286, longitude: 148.7458, kind: 'city' as const, score: 10, context: 'Queensland, Australia' },
+            { name: 'Shute Creek', latitude: 41.8806, longitude: -110.0903, kind: 'landmark' as const, score: 1, context: 'Wyoming' },
+          ];
+        }
+        return [{ name: 'Wyoming', latitude: 43.076, longitude: -107.29, kind: 'region' as const, score: 5 }];
+      },
+    };
+    const { steps } = parseCommand('fly to Wyoming. then fly to Shute Creek. hold 2 seconds');
+    const { steps: out, warnings } = await resolveSteps(steps, new Geocoder({ providers: [provider] }), makeConfig());
+
+    const shute = out.find((step) => step.place?.query.includes('shute'));
+    assert.equal(shute?.place?.name, 'Shute Creek', 'the far match should have been swapped for the near one');
+    assert.ok(warnings.some((warning) => warning.code === 'PLACE_MOVED_NEARER'));
+  });
+
+  test('but says so when no nearer reading of the name exists', async () => {
+    const provider = {
+      name: 'test',
+      async lookup(query: string) {
+        return query.includes('sydney')
+          ? [{ name: 'Sydney', latitude: -33.8688, longitude: 151.2093, kind: 'city' as const, score: 10 }]
+          : [{ name: 'Wyoming', latitude: 43.076, longitude: -107.29, kind: 'region' as const, score: 5 }];
+      },
+    };
+    const { steps } = parseCommand('fly to Wyoming. then fly to Sydney. hold 2 seconds');
+    const { steps: out, warnings } = await resolveSteps(steps, new Geocoder({ providers: [provider] }), makeConfig());
+
+    // Nothing is moved: the command really does cross the world.
+    assert.ok(out.some((step) => step.place?.name === 'Sydney'));
+    assert.ok(warnings.some((warning) => warning.code === 'PLACE_FAR_AWAY'));
+  });
+
   test('holds repeat the previous camera exactly, so nothing drifts', async () => {
     const path = await build('fly to Rome. hold 2 seconds');
     const [, move, hold] = path.keyframes;

@@ -20,7 +20,7 @@ import type {
 import type { SessionConfig } from './config.ts';
 import { AgentError } from './errors.ts';
 import type { Geocoder } from './geocode/index.ts';
-import { smartDuration, smartTilt } from './smart.ts';
+import { groundDistanceKm, smartDuration, smartTilt } from './smart.ts';
 import type { ElevationProvider } from './geocode/elevation.ts';
 
 export interface ResolveResult {
@@ -154,6 +154,8 @@ export async function resolveSteps(
       });
     }
   }
+
+  keepPlacesTogether(places, warnings);
 
   if (places.size === 0 && firstFailure !== null) {
     // Nothing at all resolved: there is no path to build. Naming only the first
@@ -343,6 +345,97 @@ async function addGroundElevation(
         'altitudes are written as if the ground were at sea level.',
     });
   }
+}
+
+/**
+ * Pulls a stray place back to where the rest of the command is.
+ *
+ * A name on its own is often ambiguous, and an online search answers with the
+ * one it finds most important rather than the one meant: a brief about the
+ * LaBarge/Shute Creek area of Wyoming resolved a step to Shute Harbour in
+ * Queensland, twelve thousand kilometres away, and the shot opened there.
+ *
+ * Where a place sits far from every other place in the same command, its own
+ * runner-up candidates are checked for one that does not. That is the standard
+ * way to read an ambiguous name - near the others, unless the command says
+ * otherwise - and where no candidate is nearer, the plan says so rather than
+ * quietly crossing an ocean.
+ */
+function keepPlacesTogether(places: Map<number, GeoPlace>, warnings: Warning[]): void {
+  if (places.size < 2) return;
+  // Far enough that no shot list means both by accident, near enough that a
+  // plan crossing one country is left alone.
+  const farKm = 2_000;
+
+  /** Where the command is, judged without the step being judged. */
+  const restOf = (index: number): { latitude: number; longitude: number } => {
+    const others = [...places.entries()].filter(([at]) => at !== index).map(([, place]) => place);
+    return {
+      latitude: median(others.map((place) => place.latitude)),
+      longitude: median(others.map((place) => place.longitude)),
+    };
+  };
+
+  // First the mistakes: a name whose own runner-up sits with the rest of the
+  // command was almost certainly read as the wrong one of two places.
+  for (const [index, place] of [...places.entries()]) {
+    const rest = restOf(index);
+    if (groundDistanceKm(place, rest) <= farKm) continue;
+    const nearer = place.alternatives.find((candidate) => groundDistanceKm(candidate, rest) <= farKm);
+    if (nearer === undefined) continue;
+    places.set(index, {
+      ...place,
+      name: nearer.name,
+      latitude: nearer.latitude,
+      longitude: nearer.longitude,
+      kind: nearer.kind,
+      context: nearer.context,
+      ambiguous: true,
+      alternatives: [
+        {
+          name: place.name,
+          latitude: place.latitude,
+          longitude: place.longitude,
+          kind: place.kind,
+          score: 0,
+          context: place.context,
+        },
+        ...place.alternatives.filter((candidate) => candidate !== nearer),
+      ],
+    });
+    warnings.push({
+      code: 'PLACE_MOVED_NEARER',
+      stepIndex: index,
+      message:
+        `"${place.query}" first matched ${describe(place.name, place.context)}, ` +
+        `${Math.round(groundDistanceKm(place, rest))} km from the rest of this command; ` +
+        `${describe(nearer.name, nearer.context)} was used instead.`,
+    });
+  }
+
+  // Then what is left: a command really can cross the world, so this is said
+  // once, about the furthest step, rather than repeated for every place in it.
+  let worst: { index: number; place: GeoPlace; km: number } | null = null;
+  for (const [index, place] of places.entries()) {
+    const km = groundDistanceKm(place, restOf(index));
+    if (km > farKm && (worst === null || km > worst.km)) worst = { index, place, km };
+  }
+  if (worst !== null) {
+    warnings.push({
+      code: 'PLACE_FAR_AWAY',
+      stepIndex: worst.index,
+      message:
+        `"${worst.place.query}" resolved to ${describe(worst.place.name, worst.place.context)}, about ` +
+        `${Math.round(worst.km)} km from the rest of this command. ` +
+        'If that is not the one you meant, name it more fully.',
+    });
+  }
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2 : sorted[middle] ?? 0;
 }
 
 interface AltitudeDecision {

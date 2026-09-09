@@ -159,13 +159,7 @@ export async function writeAttribute(
   // committed, and the field still read its old value.
   const editSelector = `${widget} [contenteditable]`;
   const text = formatForField(typed);
-  try {
-    await page.fill(editSelector, text, { timeout: timeoutMs });
-  } catch {
-    // Older shapes of the widget may not accept fill; fall back to the keyboard.
-    await page.keyboard.press('Control+a');
-    await page.keyboard.type(text);
-  }
+  await typeIntoBox(page, target, row, editSelector, text, timeoutMs);
   try {
     await page.press(editSelector, 'Enter', { timeout: timeoutMs });
   } catch {
@@ -220,7 +214,8 @@ export async function writeAttribute(
     throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field did not take ${planned}.`, {
       detail:
         `Typed ${formatForField(typed)} into a field reading in ${before.unitTitle || 'unknown units'} ` +
-        `(one edit-box unit = ${perEdit} m); after ${settleTimeoutMs}ms it shows ` +
+        `${target.plannedUnit === 'metres' ? `(one edit-box unit = ${perEdit} m) ` : ''}` +
+        `- after ${settleTimeoutMs}ms it shows ` +
         `"${after.displayed}" ${after.unitTitle || 'in unknown units'}, which is ${readback} ` +
         `against the ${planned} that was wanted.`,
       hint: `Selector used: ${widget}`,
@@ -346,6 +341,67 @@ export function formatForField(value: number): string {
   if (!Number.isFinite(value)) return '0';
   if (Number.isInteger(value)) return value.toLocaleString('fullwide', { useGrouping: false, maximumFractionDigits: 0 });
   return value.toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/**
+ * Puts the text in the edit box, and makes sure it is there.
+ *
+ * Typing can be lost between the box opening and the keystroke arriving -
+ * focus moves, a banner appears, the app re-renders the widget - and Enter then
+ * commits whatever the box still held, which is the old value. That failure
+ * looks exactly like a rejected write: a live run typed a longitude and the
+ * field came back reading 0, its original value, with nothing to say why.
+ *
+ * So the box is read back before Enter is ever pressed, and the typing is tried
+ * again another way if it did not land.
+ */
+async function typeIntoBox(
+  page: PageLike,
+  target: AttributeTarget,
+  row: string,
+  editSelector: string,
+  text: string,
+  timeoutMs: number,
+): Promise<void> {
+  const wanted = Number(text);
+  const holds = async (): Promise<boolean> => {
+    const box = (await readRow(page, target, row)).editBox;
+    if (box === null) return false;
+    const value = parseDisplayedNumber(box);
+    return Number.isFinite(wanted) ? Math.abs(value - wanted) < 1e-9 : box.trim() === text;
+  };
+
+  const attempts: Array<() => Promise<void>> = [
+    async () => {
+      await page.fill?.(editSelector, text, { timeout: timeoutMs });
+    },
+    // Select the box's contents the way a person would, then type over them.
+    async () => {
+      await page.click?.(editSelector, { timeout: timeoutMs });
+      await page.keyboard?.press('Control+a');
+      await page.keyboard?.type(text);
+    },
+    async () => {
+      await page.fill?.(editSelector, '', { timeout: timeoutMs });
+      await page.fill?.(editSelector, text, { timeout: timeoutMs });
+    },
+  ];
+
+  let last = '';
+  for (const attempt of attempts) {
+    try {
+      await attempt();
+    } catch (cause) {
+      last = cause instanceof Error ? cause.message.split('\n')[0] ?? '' : String(cause);
+    }
+    if (await holds()) return;
+    last = (await readRow(page, target, row)).editBox ?? last;
+  }
+
+  throw new AgentError('DRIVER_FIELD_WRITE_FAILED', `The ${target.label} field would not take ${text}.`, {
+    detail: `The edit box still reads "${last}" after three attempts to type into it.`,
+    hint: `Selector used: ${editSelector}`,
+  });
 }
 
 /** The gestures tried, in order, to get a value field into edit mode. */
