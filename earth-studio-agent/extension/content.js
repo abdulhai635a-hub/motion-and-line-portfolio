@@ -652,6 +652,222 @@
     return null;
   }
 
+  // src/place-phrase.ts
+  var NOT_A_PLACE = /* @__PURE__ */ new Set([
+    // Labels a brief hangs on its lines.
+    "what",
+    "type",
+    "link",
+    "place",
+    "project",
+    "note",
+    "notes",
+    "shot",
+    "scene",
+    "easing",
+    "source",
+    "format",
+    "duration",
+    "keyframe",
+    "frame",
+    "camera",
+    // Shot sizes and moves.
+    "wide",
+    "mid",
+    "close",
+    "closeup",
+    "cu",
+    "ecu",
+    "ext",
+    "int",
+    "pov",
+    "ls",
+    "ms",
+    "pan",
+    "tilt",
+    "zoom",
+    "push",
+    "pull",
+    "orbit",
+    "reveal",
+    "descent",
+    "ascent",
+    "aerial",
+    "lateral",
+    "sideward",
+    "slow",
+    "slowly",
+    "fast",
+    "quick",
+    "quickly",
+    "very",
+    "gently",
+    "gradually",
+    "rapidly",
+    "briskly",
+    "smoothly",
+    "steady",
+    "controlled",
+    // The tool itself, and the things a brief links to.
+    "google",
+    "earth",
+    "studio",
+    "map",
+    "maps",
+    "youtube",
+    "link",
+    "url",
+    // Sentence openers, which capitalise whatever follows a full stop.
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "then",
+    "from",
+    "to",
+    "at",
+    "in",
+    "on",
+    "it",
+    "we",
+    "i",
+    "first",
+    "next",
+    "last",
+    "finally",
+    "start",
+    "end",
+    "begin",
+    "hold",
+    "fly",
+    "move",
+    "go",
+    "travel",
+    "show",
+    "shown",
+    "shows",
+    "use",
+    "used",
+    "take",
+    "takes",
+    "will",
+    "be",
+    "is",
+    "are",
+    "no",
+    "not",
+    "and",
+    "or",
+    "but",
+    "with"
+  ]);
+  var GENERIC_TAIL = /* @__PURE__ */ new Set([
+    "plant",
+    "facility",
+    "facilities",
+    "site",
+    "station",
+    "terminal",
+    "complex",
+    "works",
+    "factory",
+    "refinery",
+    "mine",
+    "field",
+    "area",
+    "region",
+    "district",
+    "zone",
+    "park",
+    "centre",
+    "center",
+    "building",
+    "tower",
+    "bridge",
+    "dam",
+    "airport",
+    "port",
+    "harbour",
+    "harbor",
+    "river",
+    "lake",
+    "valley",
+    "mountain"
+  ]);
+  var JOINERS = /* @__PURE__ */ new Set(["of", "the", "de", "del", "la", "le", "van", "von", "da", "do", "dos", "and", "upon"]);
+  var CAPITALISED = new RegExp("^\\p{Lu}", "u");
+  function namesNowhere(phrase) {
+    const parts = words(phrase).map((word) => word.replace(/[^\p{L}\p{N}'’-]/gu, "").toLowerCase()).filter((word) => word !== "");
+    if (parts.length === 0) return true;
+    return parts.every((word) => NOT_A_PLACE.has(word) || JOINERS.has(word));
+  }
+  function placeCandidates(text) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const phrase of capitalisedPhrases(text)) {
+      for (const candidate of shorten(phrase)) {
+        counts.set(candidate, (counts.get(candidate) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort((a, b) => words(b[0]).length - words(a[0]).length || b[1] - a[1] || a[0].localeCompare(b[0])).map(([candidate]) => candidate);
+  }
+  function capitalisedPhrases(text) {
+    const phrases = [];
+    for (const chunk of text.split(/[.;:,!?\n\r\t()[\]{}—–|/]+/u)) {
+      let run = [];
+      const flush = () => {
+        const phrase = trim(run);
+        if (phrase !== null) phrases.push(phrase);
+        run = [];
+      };
+      for (const word of words(chunk)) {
+        const bare = word.replace(/[^\p{L}\p{N}'’-]/gu, "");
+        if (bare === "") continue;
+        if (CAPITALISED.test(bare)) {
+          run.push(bare);
+          continue;
+        }
+        if (run.length > 0 && JOINERS.has(bare.toLowerCase())) {
+          run.push(bare);
+          continue;
+        }
+        if (run.length > 0 && GENERIC_TAIL.has(bare.toLowerCase())) {
+          run.push(bare);
+          continue;
+        }
+        flush();
+      }
+      flush();
+    }
+    return phrases;
+  }
+  function trim(run) {
+    let kept = [...run];
+    while (kept.length > 0 && NOT_A_PLACE.has((kept[0] ?? "").toLowerCase())) kept = kept.slice(1);
+    while (kept.length > 0 && isTrailingNoise(kept.at(-1) ?? "")) kept = kept.slice(0, -1);
+    if (kept.length === 0) return null;
+    if (kept.every((word) => !CAPITALISED.test(word))) return null;
+    return kept.join(" ");
+  }
+  function isTrailingNoise(word) {
+    const lower = word.toLowerCase();
+    return NOT_A_PLACE.has(lower) || JOINERS.has(lower);
+  }
+  function shorten(phrase) {
+    const parts = words(phrase);
+    const shorter = [phrase];
+    let kept = [...parts];
+    while (kept.length > 1 && GENERIC_TAIL.has((kept.at(-1) ?? "").toLowerCase())) {
+      kept = kept.slice(0, -1);
+      const candidate = kept.join(" ");
+      if (!shorter.includes(candidate)) shorter.push(candidate);
+    }
+    return shorter;
+  }
+  function words(text) {
+    return text.split(/\s+/).filter((word) => word !== "");
+  }
+
   // src/parser.ts
   var EXTRA_PROTECTED_PLACES = [
     "antigua and barbuda",
@@ -729,7 +945,8 @@
     miles: 1609.344
   };
   var DESCRIPTOR_PATTERNS = [
-    [/\b(?:outer\s+space|space|global|globe|orbit|orbital|planet|whole\s+earth)\b/, "space"],
+    // "aerial orbit" is a move around a subject, not a height above the planet.
+    [/\b(?:outer\s+space|space|global|globe|(?<!aerial\s)orbit|orbital|planet|whole\s+earth)\b/, "space"],
     [/\b(?:country|national|nation)(?:[\s-]*level)?\b/, "country"],
     [/\b(?:region|regional|state|province|county)(?:[\s-]*level)?\b/, "region"],
     [/\b(?:city|town|metro|urban)(?:[\s-]*level)?\b/, "city"],
@@ -978,7 +1195,7 @@
       working = working.replace(DESCRIPTOR_AFTER_PREPOSITION, " ");
     }
     const verbAction = readVerb(working);
-    const place = coordinates === null ? extractPlace(working) : { value: coordinates, rest: working };
+    const place = coordinates === null ? extractPlace(working, source) : { value: coordinates, rest: working };
     working = place.rest;
     let placeQuery = place.value;
     if (placeQuery !== null) {
@@ -1074,7 +1291,7 @@
     }
     return { value: round3(amount * factor, 3), rest: text.replace(match[0], " ") };
   }
-  function extractPlace(text) {
+  function extractPlace(text, source) {
     const match = PLACE_PREPOSITION.exec(text);
     if (match?.index !== void 0) {
       const before = text.slice(0, match.index);
@@ -1083,9 +1300,33 @@
       const phraseRaw = boundary?.index === void 0 ? after : after.slice(0, boundary.index);
       const tail = boundary?.index === void 0 ? "" : after.slice(boundary.index);
       const phrase = cleanPlace(phraseRaw);
-      if (phrase !== null) return { value: phrase, rest: `${before} ${tail} ` };
+      if (phrase !== null && wordCount(phrase) <= MAX_PLACE_WORDS && !namesNowhere(phrase)) {
+        return { value: phrase, rest: `${before} ${tail} ` };
+      }
     }
+    const named = placeCandidates(source).find((candidate) => !alreadyUnderstood(candidate));
+    if (named !== void 0) return { value: named.toLowerCase(), rest: without(text, named) };
     return fallbackPlace(text);
+  }
+  function alreadyUnderstood(phrase) {
+    const parts = phrase.split(/\s+/).map((word) => word.replace(/[^\p{L}\p{N}'-]/gu, "").toLowerCase());
+    return parts.every((word) => {
+      if (word === "") return true;
+      if (FILLER_WORDS.has(word) || isActionWord(word) || readDescriptorExact(word) !== null) return true;
+      const spaced = ` ${word} `;
+      return SPEED_PHRASES.some(([pattern]) => pattern.test(spaced)) || TILT_PHRASES.some(([pattern]) => pattern.test(spaced)) || FOV_PHRASES.some(([pattern]) => pattern.test(spaced));
+    });
+  }
+  var MAX_PLACE_WORDS = 4;
+  function wordCount(text) {
+    return text.split(/\s+/).filter((word) => word !== "").length;
+  }
+  function without(text, phrase) {
+    const pattern = new RegExp(
+      phrase.split(/\s+/).map((word) => escapeForRegExp(word.toLowerCase())).join("\\s+"),
+      "i"
+    );
+    return text.replace(pattern, " ");
   }
   function fallbackPlace(text) {
     const kept = [];
@@ -1100,7 +1341,9 @@
       }
     }
     const phrase = cleanPlace(consumed.join(" "));
-    if (phrase === null) return { value: null, rest: text };
+    if (phrase === null || wordCount(phrase) > MAX_PLACE_WORDS || namesNowhere(phrase)) {
+      return { value: null, rest: text };
+    }
     return { value: phrase, rest: ` ${kept.join(" ")} ` };
   }
   function isActionWord(word) {
@@ -1841,8 +2084,8 @@
     "ease"
   ]);
   function looksWorthLookingUp(query) {
-    const words = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 3 && !NOT_A_NAME.has(word));
-    return words.length > 0;
+    const words2 = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 3 && !NOT_A_NAME.has(word));
+    return words2.length > 0;
   }
 
   // src/driver/selectors.ts

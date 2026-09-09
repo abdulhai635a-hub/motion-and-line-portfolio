@@ -227,6 +227,27 @@ note, a sentence about what the viewer will see - are reported as notes rather
 than turned into extra moves. A stated frame rate or frame size is applied to
 the plan, and said so in a warning.
 
+### Finding the place in a sentence written for a person
+
+A shot list does not say "fly to Shute Creek". It says
+
+```
+What will be shown: WIDE - Shute Creek gas plant's complete industrial
+footprint, slow lateral pan
+```
+
+Read as "whatever is not a verb or a filler word must be the place", that
+became a geocoder query for the whole sentence. It is read by its capitals
+instead: proper nouns are what name a place once a command has been translated,
+they survive translation intact, and they are short. The name is tried with the
+generic word a plan hangs off it and then without ("Shute Creek facility", then
+"Shute Creek"), the longest and most repeated name wins, and a phrase whose
+every word the grammar already understands - "slow sideward reveal", "Type:
+Map" - is not a destination at all.
+
+A place name is at most four words. Anything longer is a sentence about a
+place, and is left out with a note rather than looked up.
+
 ### Pasting a shot plan
 
 A brief written for a person - a heading, a coordinate in brackets, `Type:`,

@@ -133,7 +133,16 @@ describe('resolveSteps', () => {
     // Pasted shot plans carry headings and notes. They are not places, and
     // failing the whole run over them makes the agent useless for real briefs.
     const config = makeConfig();
-    const { steps } = parseCommand('fly to Rome. Link: Google Earth Studio. then fly to Cairo');
+    const { steps, ignored } = parseCommand('fly to Rome. Link: Google Earth Studio. then fly to Cairo');
+    // The heading never becomes a step at all: nothing in it names anywhere.
+    assert.deepEqual(ignored, ['Link: Google Earth Studio']);
+    const { steps: out } = await resolveSteps(steps, new Geocoder(), config);
+    assert.deepEqual(out.map((step) => step.place?.name), ['Rome', 'Rome', 'Cairo']);
+  });
+
+  test('a line that is not a place but reaches the geocoder is dropped, not fatal', async () => {
+    const config = makeConfig();
+    const { steps } = parseCommand('fly to Rome. then fly to Qqqqzzz. then fly to Cairo');
     const { steps: out, warnings } = await resolveSteps(steps, new Geocoder(), config);
     assert.deepEqual(out.map((step) => step.place?.name), ['Rome', 'Rome', 'Cairo']);
     assert.ok(warnings.some((warning) => warning.code === 'PLACE_NOT_FOUND' && /left out/.test(warning.message)));

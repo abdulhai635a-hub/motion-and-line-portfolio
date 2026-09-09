@@ -23,6 +23,7 @@ import { AgentError } from './errors.ts';
 import { multiWordPlaceNames } from './geocode/gazetteer.ts';
 import { findCoordinates } from './geocode/coordinates.ts';
 import { parseKeyframeRow, parseProjectSettings, type ProjectSettings } from './keyframe-row.ts';
+import { namesNowhere, placeCandidates } from './place-phrase.ts';
 
 /**
  * Place names whose own punctuation would otherwise be read as a clause break.
@@ -67,7 +68,8 @@ const METRES_PER_UNIT: Record<string, number> = {
 
 /** Longest phrase first, so "country level" wins over "country". */
 const DESCRIPTOR_PATTERNS: Array<[RegExp, ZoomDescriptor]> = [
-  [/\b(?:outer\s+space|space|global|globe|orbit|orbital|planet|whole\s+earth)\b/, 'space'],
+  // "aerial orbit" is a move around a subject, not a height above the planet.
+  [/\b(?:outer\s+space|space|global|globe|(?<!aerial\s)orbit|orbital|planet|whole\s+earth)\b/, 'space'],
   [/\b(?:country|national|nation)(?:[\s-]*level)?\b/, 'country'],
   [/\b(?:region|regional|state|province|county)(?:[\s-]*level)?\b/, 'region'],
   [/\b(?:city|town|metro|urban)(?:[\s-]*level)?\b/, 'city'],
@@ -401,7 +403,7 @@ function parseClause(clause: string): ClauseResult | null {
   // verb such as "pull back" across a place and a leftover.
   const verbAction = readVerb(working);
 
-  const place = coordinates === null ? extractPlace(working) : { value: coordinates, rest: working };
+  const place = coordinates === null ? extractPlace(working, source) : { value: coordinates, rest: working };
   working = place.rest;
   let placeQuery = place.value;
 
@@ -517,7 +519,16 @@ function extractDuration(text: string): { value: number | null; rest: string } {
   return { value: round(amount * factor, 3), rest: text.replace(match[0], ' ') };
 }
 
-function extractPlace(text: string): { value: string | null; rest: string } {
+/**
+ * The place a clause names.
+ *
+ * A preposition points at one directly ("into Japan"). Failing that, the
+ * capitals do: a sentence written for a person names its subject as a proper
+ * noun, and reading everything else in the sentence as a place - which is what
+ * used to happen - asks the geocoder for "show wide shute creek gas plant's
+ * complete industrial footprint not aerial orbit".
+ */
+function extractPlace(text: string, source: string): { value: string | null; rest: string } {
   const match = PLACE_PREPOSITION.exec(text);
   if (match?.index !== undefined) {
     const before = text.slice(0, match.index);
@@ -526,9 +537,55 @@ function extractPlace(text: string): { value: string | null; rest: string } {
     const phraseRaw = boundary?.index === undefined ? after : after.slice(0, boundary.index);
     const tail = boundary?.index === undefined ? '' : after.slice(boundary.index);
     const phrase = cleanPlace(phraseRaw);
-    if (phrase !== null) return { value: phrase, rest: `${before} ${tail} ` };
+    // A preposition can point at a whole sentence as easily as at a name, so a
+    // long phrase is prose until the capitals say otherwise.
+    if (phrase !== null && wordCount(phrase) <= MAX_PLACE_WORDS && !namesNowhere(phrase)) {
+      return { value: phrase, rest: `${before} ${tail} ` };
+    }
   }
+
+  // Capitals name a place only when the grammar has no better use for the word.
+  // "Slowly." opens a sentence with a capital and is not a destination.
+  const named = placeCandidates(source).find((candidate) => !alreadyUnderstood(candidate));
+  // Lowercased like every other place query: the capitals did their job in
+  // finding it, and the geocoder does not care about them.
+  if (named !== undefined) return { value: named.toLowerCase(), rest: without(text, named) };
+
   return fallbackPlace(text);
+}
+
+/** True when every word of a phrase is something the grammar already reads. */
+function alreadyUnderstood(phrase: string): boolean {
+  const parts = phrase.split(/\s+/).map((word) => word.replace(/[^\p{L}\p{N}'-]/gu, '').toLowerCase());
+  return parts.every((word) => {
+    if (word === '') return true;
+    if (FILLER_WORDS.has(word) || isActionWord(word) || readDescriptorExact(word) !== null) return true;
+    const spaced = ` ${word} `;
+    return (
+      SPEED_PHRASES.some(([pattern]) => pattern.test(spaced)) ||
+      TILT_PHRASES.some(([pattern]) => pattern.test(spaced)) ||
+      FOV_PHRASES.some(([pattern]) => pattern.test(spaced))
+    );
+  });
+}
+
+/** A place name is short. Anything longer is a sentence about a place. */
+const MAX_PLACE_WORDS = 4;
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((word) => word !== '').length;
+}
+
+/** Takes a phrase back out of the working text, wherever it sits in it. */
+function without(text: string, phrase: string): string {
+  const pattern = new RegExp(
+    phrase
+      .split(/\s+/)
+      .map((word) => escapeForRegExp(word.toLowerCase()))
+      .join('\\s+'),
+    'i',
+  );
+  return text.replace(pattern, ' ');
 }
 
 /** No preposition: whatever is not filler, a verb or a level must be the place. */
@@ -550,7 +607,12 @@ function fallbackPlace(text: string): { value: string | null; rest: string } {
     }
   }
   const phrase = cleanPlace(consumed.join(' '));
-  if (phrase === null) return { value: null, rest: text };
+  // Everything that is left over is a place only when there is little of it.
+  // A whole sentence of leftovers is prose, and asking a geocoder about it
+  // wastes the run and answers with nonsense.
+  if (phrase === null || wordCount(phrase) > MAX_PLACE_WORDS || namesNowhere(phrase)) {
+    return { value: null, rest: text };
+  }
   return { value: phrase, rest: ` ${kept.join(' ')} ` };
 }
 
