@@ -76,8 +76,10 @@
       <div><label for="tilt">Tilt (deg)</label><input id="tilt" type="number" placeholder="Auto" step="1"></div>
       <div><label for="fov">Field of view</label><input id="fov" type="number" placeholder="Project's own" min="1" max="180"></div>
     </div>
-    <label class="check"><input id="online" type="checkbox"> Look unknown places up on OpenStreetMap</label>
-    <p class="hint">Without this, places come from the built-in table of about 220 countries, cities and landmarks.</p>
+    <label class="check"><input id="online" type="checkbox" checked> Look unknown places up on OpenStreetMap</label>
+    <p class="hint">On by default: the built-in table holds about 220 countries, cities and landmarks, and a real
+      shot list rarely stays inside it. Turn it off to keep the place names off the network - then anything the
+      table does not know has to be given as coordinates.</p>
   </details>
 
   <div class="buttons">

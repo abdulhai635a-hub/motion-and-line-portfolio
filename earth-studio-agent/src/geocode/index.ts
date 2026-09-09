@@ -55,7 +55,12 @@ export class Geocoder {
     }
 
     const failures: string[] = [];
+    const online = looksWorthLookingUp(query);
     for (const provider of this.providers) {
+      // "no", "use", "of the" - a pasted brief is full of these, and a fuzzy
+      // online search will happily find a village called No. The built-in table
+      // still gets a look, because it only matches names it actually holds.
+      if (!online && provider.name !== 'gazetteer') continue;
       let candidates: PlaceCandidate[];
       try {
         candidates = await provider.lookup(query);
@@ -76,7 +81,10 @@ export class Geocoder {
       detail: failures.length > 0 ? failures.join('; ') : `Tried: ${this.providers.map((p) => p.name).join(', ')}.`,
       hint: hasOnline
         ? 'Check the spelling, or use a name the online geocoder knows.'
-        : 'Check the spelling, or add --online to look the place up on OpenStreetMap.',
+        // The wording has to work wherever it is read: a "--online" flag means
+        // nothing to someone looking at the extension's panel.
+        : 'Only the built-in table of about 220 places was searched. Turn the online lookup on - ' +
+          'the "Look unknown places up on OpenStreetMap" box in the extension, or --online on the command line.',
     });
   }
 
@@ -109,6 +117,29 @@ export class Geocoder {
       alternatives: sorted.slice(1, 5),
     };
   }
+}
+
+/** Words that carry no place in them, however willing a search engine is. */
+const NOT_A_NAME = new Set([
+  'the', 'and', 'for', 'with', 'from', 'into', 'onto', 'over', 'this', 'that', 'then', 'than',
+  'use', 'used', 'using', 'take', 'takes', 'show', 'shown', 'shows', 'seen', 'see', 'will',
+  'what', 'when', 'where', 'which', 'type', 'link', 'note', 'notes', 'map', 'shot', 'scene',
+  'camera', 'view', 'move', 'moves', 'slow', 'slowly', 'fast', 'wide', 'close', 'zoom', 'cut',
+  'start', 'end', 'ends', 'both', 'each', 'here', 'there', 'not', 'none', 'yes', 'ease',
+]);
+
+/**
+ * Whether a query is worth asking a search engine about. A real place name has
+ * at least one word that is a name; a line lifted out of a brief often has
+ * none, and asking anyway is how a plan about Wyoming acquires a keyframe in
+ * Iran.
+ */
+export function looksWorthLookingUp(query: string): boolean {
+  const words = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= 3 && !NOT_A_NAME.has(word));
+  return words.length > 0;
 }
 
 /** Serialises the cache for `--cache-file`. */

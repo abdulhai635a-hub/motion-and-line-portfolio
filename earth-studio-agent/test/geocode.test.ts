@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  looksWorthLookingUp,
   Geocoder,
   createNominatimProvider,
   mapNominatimKind,
@@ -230,5 +231,38 @@ describe('nominatim provider', () => {
     assert.equal(mapNominatimKind({ addresstype: 'town' }), 'city');
     assert.equal(mapNominatimKind({ category: 'tourism' }), 'landmark');
     assert.equal(mapNominatimKind({}), 'unknown');
+  });
+});
+
+describe('what is worth looking up online', () => {
+  test('a place name is', () => {
+    for (const query of ['shute creek', 'wyoming', 'carajas mine', 'rome', 'mount fuji']) {
+      assert.equal(looksWorthLookingUp(query), true, query);
+    }
+  });
+
+  test('a line lifted out of a brief is not', () => {
+    // A fuzzy online search will find a village called No, and a plan about
+    // Wyoming does not want a keyframe there.
+    for (const query of ['no', 'use', 'type map', 'the and for', 'shot 1']) {
+      assert.equal(looksWorthLookingUp(query), false, query);
+    }
+  });
+
+  test('the built-in table is still asked, since it only matches real names', async () => {
+    const online: GeocodeProvider = {
+      name: 'nominatim',
+      async lookup() {
+        throw new Error('the online geocoder should not have been asked');
+      },
+    };
+    const geocoder = new Geocoder({ providers: [offlineProvider, online] });
+    await assert.rejects(() => geocoder.resolve('type map'), (error: unknown) => {
+      assert.ok(error instanceof AgentError);
+      assert.equal(error.code, 'PLACE_NOT_FOUND');
+      return true;
+    });
+    // And a real name still reaches it.
+    assert.equal((await geocoder.resolve('Rome')).name, 'Rome');
   });
 });

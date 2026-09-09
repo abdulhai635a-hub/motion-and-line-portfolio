@@ -155,10 +155,19 @@ export async function resolveSteps(
     }
   }
 
-  if (places.size === 0) {
-    // Nothing at all resolved: there is no path to build, so the first failure
-    // is the honest answer rather than a warning nobody can act on.
-    if (firstFailure !== null) throw firstFailure;
+  if (places.size === 0 && firstFailure !== null) {
+    // Nothing at all resolved: there is no path to build. Naming only the first
+    // line that failed hides the one the person actually meant as a place, so
+    // every attempt is listed.
+    const queries = warnings
+      .filter((warning) => warning.code === 'PLACE_NOT_FOUND')
+      .map((warning) => warning.message.split('"')[1] ?? '')
+      .filter((query) => query !== '');
+    throw new AgentError('PLACE_NOT_FOUND', 'None of the places in this command could be found.', {
+      stepIndex: firstFailure.stepIndex,
+      detail: queries.length > 0 ? `Looked for: ${queries.map((query) => `"${query}"`).join(', ')}.` : firstFailure.detail,
+      hint: firstFailure.hint,
+    });
   }
   for (const index of dropped) {
     const at = steps.findIndex((step) => step.index === index);

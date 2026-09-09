@@ -1275,8 +1275,13 @@ var EarthStudioAgent = (() => {
         });
       }
     }
-    if (places.size === 0) {
-      if (firstFailure !== null) throw firstFailure;
+    if (places.size === 0 && firstFailure !== null) {
+      const queries = warnings.filter((warning) => warning.code === "PLACE_NOT_FOUND").map((warning) => warning.message.split('"')[1] ?? "").filter((query) => query !== "");
+      throw new AgentError("PLACE_NOT_FOUND", "None of the places in this command could be found.", {
+        stepIndex: firstFailure.stepIndex,
+        detail: queries.length > 0 ? `Looked for: ${queries.map((query) => `"${query}"`).join(", ")}.` : firstFailure.detail,
+        hint: firstFailure.hint
+      });
     }
     for (const index of dropped) {
       const at = steps.findIndex((step2) => step2.index === index);
@@ -1693,7 +1698,9 @@ var EarthStudioAgent = (() => {
         return place;
       }
       const failures = [];
+      const online = looksWorthLookingUp(query);
       for (const provider of this.providers) {
+        if (!online && provider.name !== "gazetteer") continue;
         let candidates;
         try {
           candidates = await provider.lookup(query);
@@ -1710,7 +1717,7 @@ var EarthStudioAgent = (() => {
       throw new AgentError("PLACE_NOT_FOUND", `Could not resolve the place "${query}".`, {
         stepIndex,
         detail: failures.length > 0 ? failures.join("; ") : `Tried: ${this.providers.map((p) => p.name).join(", ")}.`,
-        hint: hasOnline ? "Check the spelling, or use a name the online geocoder knows." : "Check the spelling, or add --online to look the place up on OpenStreetMap."
+        hint: hasOnline ? "Check the spelling, or use a name the online geocoder knows." : 'Only the built-in table of about 220 places was searched. Turn the online lookup on - the "Look unknown places up on OpenStreetMap" box in the extension, or --online on the command line.'
       });
     }
     /** Sorts candidates, picks the winner, and works out whether it is ambiguous. */
@@ -1737,6 +1744,68 @@ var EarthStudioAgent = (() => {
       };
     }
   };
+  var NOT_A_NAME = /* @__PURE__ */ new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "into",
+    "onto",
+    "over",
+    "this",
+    "that",
+    "then",
+    "than",
+    "use",
+    "used",
+    "using",
+    "take",
+    "takes",
+    "show",
+    "shown",
+    "shows",
+    "seen",
+    "see",
+    "will",
+    "what",
+    "when",
+    "where",
+    "which",
+    "type",
+    "link",
+    "note",
+    "notes",
+    "map",
+    "shot",
+    "scene",
+    "camera",
+    "view",
+    "move",
+    "moves",
+    "slow",
+    "slowly",
+    "fast",
+    "wide",
+    "close",
+    "zoom",
+    "cut",
+    "start",
+    "end",
+    "ends",
+    "both",
+    "each",
+    "here",
+    "there",
+    "not",
+    "none",
+    "yes",
+    "ease"
+  ]);
+  function looksWorthLookingUp(query) {
+    const words = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 3 && !NOT_A_NAME.has(word));
+    return words.length > 0;
+  }
 
   // src/driver/selectors.ts
   var CAMERA_FIELD_ORDER = [
