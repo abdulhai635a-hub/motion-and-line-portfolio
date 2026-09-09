@@ -2880,6 +2880,43 @@
     if (latin.length / letters.length < 0.5) return false;
     return ENGLISH_MARKERS.test(text);
   }
+  var SCRIPT_LANGUAGES = [
+    ["Bengali", "bn"],
+    ["Devanagari", "hi"],
+    ["Arabic", "ar"],
+    ["Cyrillic", "ru"],
+    // Kana before Han: Japanese is written in all three, and any kana at all
+    // settles it, while Han on its own is Chinese.
+    ["Hiragana", "ja"],
+    ["Katakana", "ja"],
+    ["Hangul", "ko"],
+    ["Han", "zh"],
+    ["Thai", "th"],
+    ["Hebrew", "he"],
+    ["Greek", "el"],
+    ["Tamil", "ta"],
+    ["Telugu", "te"],
+    ["Gujarati", "gu"],
+    ["Gurmukhi", "pa"],
+    ["Kannada", "kn"],
+    ["Malayalam", "ml"],
+    ["Sinhala", "si"],
+    ["Myanmar", "my"],
+    ["Khmer", "km"],
+    ["Lao", "lo"],
+    ["Georgian", "ka"],
+    ["Armenian", "hy"],
+    ["Ethiopic", "am"]
+  ];
+  function scriptLanguage(text, share = 0.1) {
+    const letters = text.replace(/[^\p{L}]/gu, "");
+    if (letters === "") return void 0;
+    for (const [script, language] of SCRIPT_LANGUAGES) {
+      const found = letters.match(new RegExp(`\\p{Script=${script}}`, "gu"))?.length ?? 0;
+      if (found / letters.length >= share) return language;
+    }
+    return void 0;
+  }
   function translatorApi() {
     return globalThis.Translator;
   }
@@ -2907,10 +2944,11 @@
     if (options.assumeEnglish === true) {
       return { english: trimmed, translated: false, via: "assumed" };
     }
-    if (looksEnglish(trimmed)) {
+    const byScript = scriptLanguage(trimmed);
+    if (byScript === void 0 && looksEnglish(trimmed)) {
       return { english: trimmed, translated: false, via: "already-english" };
     }
-    const detected = await detectLanguage(trimmed, options);
+    const detected = byScript ?? await detectLanguage(trimmed, options);
     const source = detected === "und" || detected === "en" ? "auto" : detected;
     if (options.translate !== void 0) {
       const english = (await options.translate(trimmed, source)).trim();
@@ -2925,7 +2963,7 @@
     if (api === void 0 || source === "auto") {
       throw new AgentError("NO_STEPS_PARSED", "This command is not in English and it could not be translated.", {
         detail: api === void 0 ? "This browser has no built-in translator." : `The language of the command could not be identified (detected: ${detected}).`,
-        hint: "Write the command in English, or set a translation service in the extension options."
+        hint: "Chrome translates on the device from version 138; on an older one, write the command in English. Place names can stay as they are."
       });
     }
     try {
@@ -2940,7 +2978,7 @@
     } catch (cause) {
       throw new AgentError("NO_STEPS_PARSED", `The command could not be translated from ${detected}.`, {
         detail: cause instanceof Error ? cause.message : String(cause),
-        hint: "Write the command in English, or set a translation service in the extension options.",
+        hint: `Chrome could not translate from ${detected}. Write the command in English instead - place names can stay as they are.`,
         cause
       });
     }

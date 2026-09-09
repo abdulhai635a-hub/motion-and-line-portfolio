@@ -3,7 +3,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectLanguage, looksEnglish, toEnglish } from '../src/extension/language.ts';
+import { detectLanguage, looksEnglish, scriptLanguage, toEnglish } from '../src/extension/language.ts';
 import { AgentError } from '../src/errors.ts';
 
 describe('looksEnglish', () => {
@@ -113,5 +113,51 @@ describe('detectLanguage', () => {
 
   test('uses the supplied detector when there is one', async () => {
     assert.equal(await detectLanguage('hola', { detectLanguage: async () => 'es' }), 'es');
+  });
+});
+
+describe('a command written in two languages at once', () => {
+  const MIXED = [
+    'কী দেখাবে: MID — Shute Creek Facility-এর অবস্থান Wyoming প্রান্তরের মধ্যে, ধীরে নিচে নামা push-in',
+    'ধরন: ম্যাপ',
+    'লিংক: Google Earth Studio',
+    'কোনটা নেবে: Wyoming থেকে সরাসরি Shute Creek Facility-র দিকে ধীর controlled descent',
+  ].join('\n');
+
+  test('is read from its script, not from a detector', () => {
+    // Most of the characters are Latin - the place names and the jargon - so a
+    // detector calls this English and the half carrying the instructions goes
+    // unread.
+    assert.equal(scriptLanguage(MIXED), 'bn');
+  });
+
+  test('is translated even when the detector insists it is English', async () => {
+    const asked: string[] = [];
+    const result = await toEnglish(MIXED, {
+      detectLanguage: async () => 'en',
+      translate: async (text, source) => {
+        asked.push(source);
+        return 'slow push-in toward Shute Creek Facility, Wyoming';
+      },
+    });
+    assert.equal(result.translated, true);
+    assert.equal(result.detected, 'bn');
+    assert.deepEqual(asked, ['bn']);
+  });
+
+  test('plain English is still left alone', async () => {
+    const result = await toEnglish('fly to Rome and hold 2 seconds', {
+      translate: async () => {
+        throw new Error('English should not be translated');
+      },
+    });
+    assert.equal(result.via, 'already-english');
+  });
+
+  test('knows the scripts a shot plan is likely to arrive in', () => {
+    assert.equal(scriptLanguage('東京タワーへ飛ぶ'), 'ja');
+    assert.equal(scriptLanguage('лететь в Москву'), 'ru');
+    assert.equal(scriptLanguage('الطيران إلى القاهرة'), 'ar');
+    assert.equal(scriptLanguage('fly to Rome'), undefined);
   });
 });

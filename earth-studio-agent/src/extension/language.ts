@@ -48,6 +48,41 @@ export function looksEnglish(text: string): boolean {
   return ENGLISH_MARKERS.test(text);
 }
 
+/**
+ * The language a script belongs to, for the scripts a shot plan is likely to
+ * arrive in. The first script found wins, so the order settles the writing
+ * systems that overlap.
+ */
+const SCRIPT_LANGUAGES: Array<[string, string]> = [
+  ['Bengali', 'bn'], ['Devanagari', 'hi'], ['Arabic', 'ar'], ['Cyrillic', 'ru'],
+  // Kana before Han: Japanese is written in all three, and any kana at all
+  // settles it, while Han on its own is Chinese.
+  ['Hiragana', 'ja'], ['Katakana', 'ja'], ['Hangul', 'ko'], ['Han', 'zh'],
+  ['Thai', 'th'], ['Hebrew', 'he'], ['Greek', 'el'], ['Tamil', 'ta'],
+  ['Telugu', 'te'], ['Gujarati', 'gu'], ['Gurmukhi', 'pa'], ['Kannada', 'kn'],
+  ['Malayalam', 'ml'], ['Sinhala', 'si'], ['Myanmar', 'my'], ['Khmer', 'km'],
+  ['Lao', 'lo'], ['Georgian', 'ka'], ['Armenian', 'hy'], ['Ethiopic', 'am'],
+];
+
+/**
+ * The language of a command, read from the letters themselves.
+ *
+ * A shot plan is usually written in two languages at once - the instructions in
+ * one, the place names and the jargon in English - and a detector shown that
+ * says "en", because most of the characters are Latin. It is not: the part
+ * carrying the instructions is the part that has to be translated. Any
+ * substantial run of another script settles it, whatever the detector thinks.
+ */
+export function scriptLanguage(text: string, share = 0.1): string | undefined {
+  const letters = text.replace(/[^\p{L}]/gu, '');
+  if (letters === '') return undefined;
+  for (const [script, language] of SCRIPT_LANGUAGES) {
+    const found = letters.match(new RegExp(`\\p{Script=${script}}`, 'gu'))?.length ?? 0;
+    if (found / letters.length >= share) return language;
+  }
+  return undefined;
+}
+
 interface ChromeTranslator {
   translate(text: string): Promise<string>;
   destroy?(): void;
@@ -113,11 +148,16 @@ export async function toEnglish(text: string, options: TranslateOptions = {}): P
   if (options.assumeEnglish === true) {
     return { english: trimmed, translated: false, via: 'assumed' };
   }
-  if (looksEnglish(trimmed)) {
+  // The script comes first. A command with its instructions in Bengali and its
+  // place names in English is mostly Latin characters, so both the marker test
+  // below and a language detector call it English - and the half that says what
+  // the camera should do goes unread.
+  const byScript = scriptLanguage(trimmed);
+  if (byScript === undefined && looksEnglish(trimmed)) {
     return { english: trimmed, translated: false, via: 'already-english' };
   }
 
-  const detected = await detectLanguage(trimmed, options);
+  const detected = byScript ?? (await detectLanguage(trimmed, options));
   const source = detected === 'und' || detected === 'en' ? 'auto' : detected;
 
   if (options.translate !== undefined) {
@@ -137,7 +177,9 @@ export async function toEnglish(text: string, options: TranslateOptions = {}): P
         api === undefined
           ? 'This browser has no built-in translator.'
           : `The language of the command could not be identified (detected: ${detected}).`,
-      hint: 'Write the command in English, or set a translation service in the extension options.',
+      hint:
+        'Chrome translates on the device from version 138; on an older one, write the command in English. ' +
+        'Place names can stay as they are.',
     });
   }
 
@@ -153,7 +195,9 @@ export async function toEnglish(text: string, options: TranslateOptions = {}): P
   } catch (cause) {
     throw new AgentError('NO_STEPS_PARSED', `The command could not be translated from ${detected}.`, {
       detail: cause instanceof Error ? cause.message : String(cause),
-      hint: 'Write the command in English, or set a translation service in the extension options.',
+      hint:
+        `Chrome could not translate from ${detected}. Write the command in English instead - ` +
+        'place names can stay as they are.',
       cause,
     });
   }
